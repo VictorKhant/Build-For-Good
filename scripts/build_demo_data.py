@@ -15,11 +15,33 @@ The surplus reports are SIMULATED (seeded, reproducible): the platform's real
 input would be voluntary end-of-day reporting, which doesn't exist yet.
 Quantities are scaled to facility type/size. Everything else is real data.
 """
-import csv, json, random
+import csv, json, random, re
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 rng = random.Random(20260820)
+
+# The demo models one fixed evening: Thursday 2026-08-20 — the 3rd Thursday
+# of the month. Pantry-unit availability is resolved against this at build
+# time so the demo stays deterministic.
+DEMO_WEEKDAY, DEMO_ORDINAL = "Thursday", 3
+WEEKDAYS = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]
+
+
+def available_tonight(day_list):
+    """Does this schedule put staff on site on the demo evening?
+    Handles 'Daily', 'Friday', 'Tuesday-Thursday', '1st & 4th Thursday'."""
+    d = day_list.strip()
+    if d.lower() == "daily":
+        return True
+    if "-" in d:
+        a, _, b = [*map(str.strip, d.partition("-"))]
+        if a in WEEKDAYS and b in WEEKDAYS:
+            return WEEKDAYS.index(a) <= WEEKDAYS.index(DEMO_WEEKDAY) <= WEEKDAYS.index(b)
+    if DEMO_WEEKDAY not in d:
+        return False
+    ordinals = [int(n) for n in re.findall(r"(\d)(?:st|nd|rd|th)", d)]
+    return DEMO_ORDINAL in ordinals if ordinals else True
 
 # Agencies missing coordinates in the source data, hand-placed for the demo
 # (same ~±150 m standard the dataset itself uses). A.B. Jones & Co. has no
@@ -137,6 +159,37 @@ for a in csv.DictReader(open(ROOT / "newdata/agencies.csv")):
         "geocode": geocode,
     })
 
+# ---------------------------------------------------------------- pantries
+# Mobile pantry sites can also dispatch a unit to collect and distribute —
+# but only when their schedule has staff on site tonight, and only sites
+# serving the general public (Special Delivery serves home-bound only).
+SHORT_NAMES = {
+    "St. Vincent de Paul / Father Joe's Villages (Imperial Ave)": "Father Joe's (Imperial Ave)",
+    "St. Vincent De Paul Father Joe's Villages (E Street)": "Father Joe's (E Street)",
+    "San Diego Broadway Spanish Seventh Day Adventist": "Broadway Spanish SDA",
+    "31st Street Seventh Day Adventist Church": "31st St SDA Church",
+}
+pantries = []
+for i, p in enumerate(csv.DictReader(open(ROOT / "newdata/mobile_pantries.csv"))):
+    avail = available_tonight(p["day_list"])
+    public = p["downtown_relevant"] == "True"
+    pantries.append({
+        "id": f"P{i:02d}",
+        "name": SHORT_NAMES.get(p["site_name"], p["site_name"]),
+        "operator": p["operator"],
+        "lon": float(p["lon"]),
+        "lat": float(p["lat"]),
+        "program": p["program"],
+        "schedule": p["day_list"] + (f" {p['start_time']}–{p['end_time']}" if p["end_time"] else ""),
+        "daysPerWeek": float(p["days_per_week"]),
+        "acceptsPrepared": "meal" in p["program"].lower(),
+        "availableTonight": avail,
+        "dispatchable": avail and public,
+        "whyNot": (None if avail and public
+                   else "serves home-bound individuals only" if not public
+                   else f"no unit tonight — runs {p['day_list']}"),
+    })
+
 # ---------------------------------------------------------------- constants
 constants = {
     "LBS_PER_MEAL": 1.2,        # Feeding America conversion
@@ -149,6 +202,8 @@ constants = {
     "HANDLING_MIN": 25,         # load + unload/serve time per run (demo assumption)
     "MIN_CANDIDATE_NEED": 1.0,  # blocks below this are shown but not matched
     "ACCESS_BOOST_MAX": 0.5,    # reward boost for blocks with poor weekly food access
+    "AGENCY_CAPACITY_LBS": 2000,  # box truck (demo assumption)
+    "PANTRY_CAPACITY_LBS": 150,   # pantry van / mobile unit (demo assumption)
 }
 
 out = ROOT / "demo/data.js"
@@ -157,11 +212,15 @@ out.write_text(
     f"const HOTSPOTS = {json.dumps(hotspots, indent=1)};\n"
     f"const SUPPLIERS = {json.dumps(suppliers, indent=1)};\n"
     f"const AGENCIES = {json.dumps(agencies, indent=1)};\n"
+    f"const PANTRIES = {json.dumps(pantries, indent=1)};\n"
     f"const CONSTANTS = {json.dumps(constants, indent=1)};\n"
 )
 reporting = [s for s in suppliers if s["report"]]
+dispatchable = [p for p in pantries if p["dispatchable"]]
 print(f"wrote {out}")
 print(f"  hotspots: {len(hotspots)} (candidates need>=1: {sum(1 for h in hotspots if h['need'] >= 1)})")
 print(f"  suppliers: {len(suppliers)} ({len(reporting)} reporting tonight, "
       f"{sum(s['report']['lbs'] for s in reporting)} lbs total)")
 print(f"  agencies: {len(agencies)} matchable")
+print(f"  pantries: {len(pantries)} ({len(dispatchable)} units available tonight: "
+      + ", ".join(p['name'] for p in dispatchable) + ")")

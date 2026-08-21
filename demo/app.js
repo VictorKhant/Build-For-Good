@@ -7,13 +7,22 @@ const C = CONSTANTS;
 const CANDIDATES = HOTSPOTS.filter(h => h.need >= C.MIN_CANDIDATE_NEED);
 const REPORTING = SUPPLIERS.filter(s => s.report);
 
+/* Collectors = agency trucks + mobile pantry units whose schedule has staff
+   on site tonight. Capacity is what separates them: a pantry van handles the
+   long tail nearby; an agency box truck handles bulk. */
+const COLLECTORS = [
+  ...AGENCIES.map(a => ({ ...a, kind: "agency", capacityLbs: C.AGENCY_CAPACITY_LBS })),
+  ...PANTRIES.filter(p => p.dispatchable).map(p => ({ ...p, kind: "pantry", capacityLbs: C.PANTRY_CAPACITY_LBS })),
+];
+
 /* ---------------------------------------------------------------- helpers */
 const $ = id => document.getElementById(id);
 const fmt$ = v => (v < 0 ? "-$" : "$") + Math.abs(v).toFixed(2);
 const fmtInt = v => Math.round(v).toLocaleString();
 const agShort = a => a.name
   .replace("Jacobs & Cushman San Diego Food Bank", "SD Food Bank")
-  .replace("Catholic Charities Diocese of San Diego", "Catholic Charities");
+  .replace("Catholic Charities Diocese of San Diego", "Catholic Charities")
+  .replace("Stepping Higher Incorporated", "Stepping Higher");
 
 function haversineMi(a, b) {
   const R = 3958.76, rad = Math.PI / 180;
@@ -25,23 +34,30 @@ function haversineMi(a, b) {
 const roadMi = (a, b) => haversineMi(a, b) * C.ROAD_FACTOR;
 
 /* ------------------------------------------------------- matching engine */
-/* Input: one supplier report. Output: ranked (agency, hotspot) pairs.
+/* Input: one supplier report. Output: ranked (collector, hotspot) pairs,
+   where a collector is an agency truck or a mobile pantry unit.
    net = reward − cost
    reward = mealsServed × MEAL_VALUE × accessBoost + surplusMeals × MEAL_VALUE × 0.5
-     mealsServed  = min(meals reported, block need)  — one meal per person tonight
+     collected    = min(lbs reported, collector capacity)
+     mealsServed  = min(collected meals, block need) — one meal per person tonight
      accessBoost  = 1 + ACCESS_BOOST_MAX × (7 − food-access days/wk)/7
-     surplus      = meals beyond block need, absorbed by agency pantry network
-   cost = labor + mileage over HQ → pickup → hotspot
+     surplus      = collected meals beyond block need — agency pantry network,
+                    or the pantry site's next scheduled distribution
+   cost = labor + mileage over base → pickup → hotspot
      labor    = (drive minutes + handling) × $17.75/hr
      mileage  = road miles × $0.76/mi                                        */
 function computeDispatch(supplier) {
-  const meals = supplier.report.lbs / C.LBS_PER_MEAL;
+  const lbs = supplier.report.lbs;
+  const meals = lbs / C.LBS_PER_MEAL;
   const prepared = supplier.surplus === "prepared";
-  const eligible = AGENCIES.filter(a => !prepared || a.acceptsPrepared);
+  const eligible = COLLECTORS.filter(c => !prepared || c.acceptsPrepared);
   const pairs = [];
 
-  for (const a of eligible) {
-    const leg1 = roadMi(a, supplier);
+  for (const col of eligible) {
+    const leg1 = roadMi(col, supplier);
+    const collectedLbs = Math.min(lbs, col.capacityLbs);
+    const uncollectedLbs = lbs - collectedLbs;
+    const colMeals = collectedLbs / C.LBS_PER_MEAL;
     for (const h of CANDIDATES) {
       const leg2 = roadMi(supplier, h);
       const miles = leg1 + leg2;
@@ -50,13 +66,14 @@ function computeDispatch(supplier) {
       const labor = minutes / 60 * C.WAGE_PER_HR;
       const mileage = miles * C.COST_PER_MILE;
 
-      const served = Math.min(meals, h.need);
-      const surplus = meals - served;
+      const served = Math.min(colMeals, h.need);
+      const surplus = colMeals - served;
       const boost = 1 + C.ACCESS_BOOST_MAX * (7 - Math.min(h.accessDays, 7)) / 7;
       const reward = served * C.MEAL_VALUE * boost + surplus * C.MEAL_VALUE * 0.5;
 
       pairs.push({
-        agency: a, hotspot: h,
+        collector: col, hotspot: h,
+        collectedLbs, uncollectedLbs,
         leg1, leg2, miles, driveMin, minutes, labor, mileage,
         cost: labor + mileage,
         served, surplus, boost, reward,
@@ -106,7 +123,7 @@ const TRUCK_SVG = '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M3 5h11
 const agencyMarkers = {};
 for (const a of AGENCIES) {
   const m = L.marker([a.lat, a.lon], {
-    icon: L.divIcon({ className: "", html: `<div class="mk-agency" id="ag-${a.id}">${TRUCK_SVG}</div>`, iconSize: [26, 26], iconAnchor: [13, 13] }),
+    icon: L.divIcon({ className: "", html: `<div class="mk-agency" id="col-${a.id}">${TRUCK_SVG}</div>`, iconSize: [26, 26], iconAnchor: [13, 13] }),
     zIndexOffset: 500,
   }).addTo(map);
   m.bindTooltip(
@@ -115,6 +132,25 @@ for (const a of AGENCIES) {
     { className: "hs-tip", direction: "top", opacity: 1 }
   );
   agencyMarkers[a.id] = m;
+}
+
+/* mobile pantry sites — violet diamonds; solid = unit available tonight */
+const pantryMarkers = {};
+for (const p of PANTRIES) {
+  const cls = p.dispatchable ? "mk-pantry" : "mk-pantry idle";
+  const m = L.marker([p.lat, p.lon], {
+    icon: L.divIcon({ className: "", html: `<div class="${cls}" id="col-${p.id}"></div>`, iconSize: [16, 16], iconAnchor: [8, 8] }),
+    zIndexOffset: 400,
+  }).addTo(map);
+  const status = p.dispatchable
+    ? "<br><b style=\"color:#9085e9\">mobile unit available tonight</b>"
+    : `<br>${p.whyNot}`;
+  m.bindTooltip(
+    `<b>${p.name}</b><div class="tip-k">${p.operator} &middot; ${p.program}` +
+    `<br>runs ${p.schedule}${status}</div>`,
+    { className: "hs-tip", direction: "top", opacity: 1 }
+  );
+  pantryMarkers[p.id] = m;
 }
 
 /* supplier markers — the "input markers", always on the map */
@@ -172,7 +208,7 @@ let selectedId = null;
 function clearFx() {
   fxLayer.clearLayers();
   $("calcOverlay").classList.remove("show");
-  document.querySelectorAll(".mk-agency.winner").forEach(el => el.classList.remove("winner"));
+  document.querySelectorAll(".mk-agency.winner, .mk-pantry.winner").forEach(el => el.classList.remove("winner"));
   document.querySelectorAll(".mk-supplier.selected").forEach(el => el.classList.remove("selected"));
   for (const id in hotspotMarkers) {
     const el = hotspotMarkers[id].getElement();
@@ -215,8 +251,8 @@ function runTriangulation(s, result, token) {
 
   /* calc overlay */
   const constraint = result.prepared
-    ? `constraint: prepared food &rarr; ${result.eligible.length} of ${AGENCIES.length} agencies eligible`
-    : `${result.eligible.length} agencies &times; ${CANDIDATES.length} blocks`;
+    ? `constraint: prepared food &rarr; ${result.eligible.length} of ${COLLECTORS.length} collectors eligible`
+    : `${result.eligible.length} collectors &times; ${CANDIDATES.length} blocks`;
   $("calcTitle").textContent = "TRIANGULATING";
   $("calcLine").innerHTML = `${s.name} &middot; ${constraint}`;
   $("calcOverlay").classList.add("show");
@@ -269,20 +305,21 @@ function runTriangulation(s, result, token) {
     if (!live()) return;
     $("calcTitle").textContent = "DISPATCH LOCKED";
     $("calcLine").innerHTML =
-      `${agShort(best.agency)} &rarr; pickup &rarr; ${best.hotspot.location}`;
+      `${agShort(best.collector)} &rarr; pickup &rarr; ${best.hotspot.location}`;
     $("calcCount").textContent = fmtInt(result.evaluated);
 
     /* keep only radar + winning graphics */
     fxLayer.eachLayer(l => { if (l.options.className === "short-line") fxLayer.removeLayer(l); });
 
-    const a = best.agency, h = best.hotspot;
+    const a = best.collector, h = best.hotspot;
     fxLayer.addLayer(L.polyline([[a.lat, a.lon], [s.lat, s.lon]], {
-      color: "#3987e5", weight: 2.5, opacity: 0.85, className: "route-leg1", interactive: false,
+      color: a.kind === "pantry" ? "#9085e9" : "#3987e5",
+      weight: 2.5, opacity: 0.85, className: "route-leg1", interactive: false,
     }));
     fxLayer.addLayer(L.polyline([[s.lat, s.lon], [h.lat, h.lon]], {
       color: "#1baf7a", weight: 3.5, opacity: 0.95, className: "route-leg2", interactive: false,
     }));
-    $("ag-" + a.id).classList.add("winner");
+    $("col-" + a.id).classList.add("winner");
     const hEl = hotspotMarkers[h.id].getElement();
     if (hEl) hEl.classList.add("hs-winner");
 
@@ -296,15 +333,16 @@ function runTriangulation(s, result, token) {
 /* ---------------------------------------------------------- result panel */
 function renderResult(s, result) {
   const b = result.pairs[0];
-  const h = b.hotspot, a = b.agency;
+  const h = b.hotspot, a = b.collector;
+  const isPantry = a.kind === "pantry";
   const boostPct = Math.round((b.boost - 1) * 100);
   const fmv = s.report.lbs * C.FMV_PER_LB;
 
-  /* alternates: next best pairs with a distinct agency or hotspot */
+  /* alternates: next best pairs with a distinct collector or hotspot */
   const alts = [];
   for (const p of result.pairs.slice(1)) {
     if (alts.length === 3) break;
-    if (p.agency !== a || p.hotspot !== h) alts.push(p);
+    if (p.collector !== a || p.hotspot !== h) alts.push(p);
   }
 
   $("resultBody").innerHTML = `
@@ -313,12 +351,12 @@ function renderResult(s, result) {
       &middot; ${fmtInt(result.meals)} meals &middot; reported ${s.report.time}</div>
 
     <div class="pair">
-      <div class="pair-node pn-agency">
+      <div class="pair-node ${isPantry ? "pn-pantryunit" : "pn-agency"}">
         <div class="pn-badge">${TRUCK_SVG.replace("<svg", '<svg width="17" height="17"')}</div>
         <div>
-          <div class="pn-role">Collecting agency</div>
+          <div class="pn-role">${isPantry ? "Mobile pantry unit" : "Collecting agency"}</div>
           <div class="pn-name">${a.name}</div>
-          <div class="pn-sub">${a.program}</div>
+          <div class="pn-sub">${isPantry ? `${a.operator} &middot; ${a.program}` : a.program}</div>
         </div>
       </div>
       <div class="pair-arrow"></div>
@@ -360,19 +398,23 @@ function renderResult(s, result) {
         <span class="sv-val">${fmt$(b.net)}</span></div>
     </div>
 
-    ${result.prepared ? `<div class="rb-note">🍛 <b>Prepared food</b> — only agencies that accept
-      prepared meals were considered (${result.eligible.length} of ${AGENCIES.length}).</div>` : ""}
+    ${result.prepared ? `<div class="rb-note">🍛 <b>Prepared food</b> — only collectors that accept
+      prepared meals were considered (${result.eligible.length} of ${COLLECTORS.length}).</div>` : ""}
     ${boostPct > 0 ? `<div class="rb-note">⚡ <b>Access-gap boost +${boostPct}%</b> — this block has
       scheduled food access only ${h.accessDays.toFixed(h.accessDays % 1 ? 1 : 0)} days/week, so its
       reward is weighted up.</div>` : ""}
+    ${b.uncollectedLbs >= 1 ? `<div class="rb-note">🚐 <b>Unit capacity ${a.capacityLbs} lbs</b> —
+      the pantry van collects ${fmtInt(b.collectedLbs)} lbs; ${fmtInt(b.uncollectedLbs)} lbs stay
+      with the donor for a second pickup.</div>` : ""}
     ${b.surplus >= 1 ? `<div class="rb-note">📦 Block need absorbs ${fmtInt(b.served)} meals;
-      remaining <b>${fmtInt(b.surplus)} meals</b> ride along to ${a.name.split(" (")[0]}&rsquo;s
-      pantry network.</div>` : ""}
+      remaining <b>${fmtInt(b.surplus)} meals</b> ${isPantry
+        ? `stock ${agShort(a)}&rsquo;s next scheduled distribution`
+        : `ride along to ${agShort(a)}&rsquo;s pantry network`}.</div>` : ""}
     <div class="rb-note tax">🧾 Donation logged for <b>${s.name}</b> — est. deductible fair market
       value <b>${fmt$(fmv)}</b> (${s.report.lbs} lbs &times; $${C.FMV_PER_LB}/lb).</div>
 
     <table class="rb-table">
-      <tr><td>HQ &rarr; pickup &rarr; hotspot</td><td>${b.leg1.toFixed(1)} + ${b.leg2.toFixed(1)} mi</td></tr>
+      <tr><td>${isPantry ? "Site" : "HQ"} &rarr; pickup &rarr; hotspot</td><td>${b.leg1.toFixed(1)} + ${b.leg2.toFixed(1)} mi</td></tr>
       <tr><td>Drive + handling time</td><td>${fmtInt(b.driveMin)} + ${C.HANDLING_MIN} min</td></tr>
       <tr><td>Personnel ($${C.WAGE_PER_HR}/hr)</td><td>${fmt$(b.labor)}</td></tr>
       <tr><td>Vehicle ($${C.COST_PER_MILE}/mi)</td><td>${fmt$(b.mileage)}</td></tr>
@@ -382,14 +424,16 @@ function renderResult(s, result) {
     <div class="rb-h">Runners-up (${fmtInt(result.evaluated)} pairs evaluated)</div>
     ${alts.map((p, i) => `
       <div class="alt-row"><span class="alt-rank">${i + 2}.</span>
-        <span class="alt-pair"><b>${agShort(p.agency)}</b>
+        <span class="alt-pair"><b>${p.collector.kind === "pantry" ? "🚐 " : ""}${agShort(p.collector)}</b>
           &rarr; ${p.hotspot.location}</span>
         <span class="alt-net">${fmt$(p.net)}</span></div>`).join("")}
 
     <details class="model">
       <summary>How this was scored — the reward&#8209;cost model</summary>
       <div class="model-body"><em>net = reward − cost</em>
-reward = min(meals, need) × $${C.MEAL_VALUE}/meal × accessBoost
+collectors = agency trucks (${C.AGENCY_CAPACITY_LBS} lb) + pantry
+  units on site tonight (${C.PANTRY_CAPACITY_LBS} lb van)
+reward = min(collected meals, need) × $${C.MEAL_VALUE}/meal × accessBoost
          + overflow meals × $${C.MEAL_VALUE} × 0.5 (pantry)
 accessBoost = 1 + ${C.ACCESS_BOOST_MAX} × (7 − access days/wk)/7
 cost = (drive + ${C.HANDLING_MIN} min) × $${C.WAGE_PER_HR}/hr        [SD min. wage 2026]
