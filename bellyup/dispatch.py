@@ -73,34 +73,74 @@ def freshness_factor(reported: datetime, expires: datetime, arrives: datetime) -
 
 
 class Ledger:
-    """Meals already committed to each hotspot tonight.
+    """Tonight's confirmed deliveries.
 
-    A block holds a finite number of people. Without this, every report in the
-    feed routes to the same highest-need block and the later ones deliver food
-    nobody is there to take.
+    Two limits come out of this, and they are different questions:
+
+      meals   a block holds a finite number of people, so once its need is met
+              further food there is food left on a pavement
+      drops   MAX_DROPS_PER_NIGHT -- nobody sends five separate vans to one
+              corner in an evening, however much need is left
+
+    A dispatch is a recommendation until it is CONFIRMED. Only confirmed runs
+    enter the ledger, which is why the board shows a proposal first and books
+    it second.
     """
 
     def __init__(self) -> None:
-        self._served: dict[str, float] = {}
-        self.log: list[dict] = []
+        self.deliveries: list[dict] = []
 
-    def served(self, hotspot_id: str) -> float:
-        return self._served.get(hotspot_id, 0.0)
+    # -- serving limits -------------------------------------------------
+    def served_meals(self, hotspot_id: str) -> float:
+        return sum(d["servedMeals"] for d in self.deliveries
+                   if d["hotspotId"] == hotspot_id)
+
+    def drops(self, hotspot_id: str) -> int:
+        return sum(1 for d in self.deliveries if d["hotspotId"] == hotspot_id)
 
     def remaining(self, hotspot: dict) -> float:
-        return max(0.0, hotspot["need"] - self.served(hotspot["id"]))
+        return max(0.0, hotspot["need"] - self.served_meals(hotspot["id"]))
 
-    def commit(self, hotspot_id: str, meals: float, donor: str, collector: str) -> None:
-        self._served[hotspot_id] = self.served(hotspot_id) + meals
-        self.log.append({"hotspot_id": hotspot_id, "meals": round(meals, 1),
-                         "donor": donor, "collector": collector})
+    def is_closed(self, hotspot: dict, cfg: dict) -> tuple[bool, str]:
+        if self.drops(hotspot["id"]) >= cfg["MAX_DROPS_PER_NIGHT"]:
+            return True, "drops"
+        if self.remaining(hotspot) < 1:
+            return True, "need_met"
+        return False, ""
+
+    def dispatched_supplier_ids(self) -> set[str]:
+        return {d["supplierId"] for d in self.deliveries}
+
+    # -- booking --------------------------------------------------------
+    def confirm(self, supplier: dict, pair: dict, cfg: dict, when) -> dict:
+        n = len(self.deliveries) + 1
+        rec = {
+            "receipt": f"BU-{cfg['DEMO_DATE'].replace('-', '')}-T{n:02d}",
+            "date": cfg["DEMO_DATE"],
+            "time": when.strftime("%H:%M"),
+            "supplierId": supplier["id"], "supplier": supplier["name"],
+            "lbs": supplier["report"]["lbs"],
+            "collectedLbs": round(pair["collectedLbs"]),
+            "servedMeals": round(pair["served"]),
+            "surplusMeals": round(pair["surplus"]),
+            "collector": pair["collector"]["name"],
+            "kind": pair["collector"]["kind"],
+            "hotspotId": pair["hotspot"]["id"],
+            "hotspot": pair["hotspot"]["location"],
+            "fmv": round(supplier["report"]["lbs"] * cfg["FMV_PER_LB"], 2),
+            "net": round(pair["net"], 2),
+        }
+        self.deliveries.append(rec)
+        return rec
 
     def snapshot(self) -> dict[str, float]:
-        return {k: round(v, 1) for k, v in self._served.items() if v > 0}
+        out: dict[str, float] = {}
+        for d in self.deliveries:
+            out[d["hotspotId"]] = out.get(d["hotspotId"], 0.0) + d["servedMeals"]
+        return out
 
     def reset(self) -> None:
-        self._served.clear()
-        self.log.clear()
+        self.deliveries.clear()
 
 
 LEDGER = Ledger()
@@ -120,8 +160,8 @@ def collectors(agencies: list[dict], pantries: list[dict]) -> list[dict]:
 
 
 def compute(supplier: dict, agencies: list[dict], pantries: list[dict],
-            hotspots: list[dict], now: datetime, ledger: Ledger | None = None,
-            commit: bool = False) -> dict:
+            hotspots: list[dict], now: datetime,
+            ledger: Ledger | None = None) -> dict:
     """Rank every (collector, hotspot) pair for one surplus report."""
     ledger = LEDGER if ledger is None else ledger
     rep = supplier["report"]
@@ -192,12 +232,19 @@ def compute(supplier: dict, agencies: list[dict], pantries: list[dict],
                      f"the {expires_at:%H:%M} expiry.")
                 continue
 
-            room = ledger.remaining(h)
-            if room <= 0:
-                note("BLOCK_NEED_MET",
-                     f"{h['location']} has already been served its "
-                     f"{h['need']:.0f} person-equivalents tonight.")
+            closed, why = ledger.is_closed(h, C)
+            if closed:
+                if why == "drops":
+                    note("BLOCK_DROP_LIMIT",
+                         f"{h['location']} has already had "
+                         f"{C['MAX_DROPS_PER_NIGHT']} deliveries tonight — "
+                         f"the serving limit for one block.")
+                else:
+                    note("BLOCK_NEED_MET",
+                         f"{h['location']} has been served its "
+                         f"{h['need']:.0f} person-equivalents tonight.")
                 continue
+            room = ledger.remaining(h)
 
             fresh = freshness_factor(reported_at, expires_at, arrives)
             served = min(col_meals, room)
@@ -212,6 +259,7 @@ def compute(supplier: dict, agencies: list[dict], pantries: list[dict],
 
             pairs.append({
                 "collector": col, "hotspot": h,
+                "remaining": round(room, 1),
                 "collectedLbs": collected, "uncollectedLbs": uncollected,
                 "leg1": leg1, "leg2": leg2, "miles": miles,
                 "driveMin": drive_min, "minutes": minutes,
@@ -225,11 +273,6 @@ def compute(supplier: dict, agencies: list[dict], pantries: list[dict],
 
     pairs.sort(key=lambda p: -p["net"])
 
-    if commit and pairs:
-        b = pairs[0]
-        ledger.commit(b["hotspot"]["id"], b["served"],
-                      supplier["name"], b["collector"]["name"])
-
     return {
         "meals": meals, "prepared": prepared,
         "eligible": [c for c in all_collectors if not prepared or c["acceptsPrepared"]],
@@ -238,6 +281,7 @@ def compute(supplier: dict, agencies: list[dict], pantries: list[dict],
         "pairs": pairs,
         "evaluated": len(pairs),
         "rejections": sorted(rejected.values(), key=lambda r: -r["count"]),
+        "alreadyDispatched": supplier["id"] in ledger.dispatched_supplier_ids(),
         "window": {"from": win_from.strftime("%H:%M"), "to": win_to.strftime("%H:%M")},
         "expiresAt": expires_at.strftime("%H:%M"),
         "reportedAt": reported_at.strftime("%H:%M"),
@@ -246,7 +290,7 @@ def compute(supplier: dict, agencies: list[dict], pantries: list[dict],
 
 
 COL_KEYS = ("id", "name", "kind", "lat", "lon", "program", "capacityLbs",
-            "acceptsPrepared", "operator")
+            "acceptsPrepared", "operator", "schedule")
 HS_KEYS = ("id", "location", "area", "lat", "lon", "need", "rank", "accessDays")
 
 
@@ -261,6 +305,7 @@ def serialisable(result: dict, top: int = 12) -> dict:
 
     return {
         "meals": round(result["meals"], 1),
+        "alreadyDispatched": result["alreadyDispatched"],
         "prepared": result["prepared"],
         "eligibleCount": len(result["eligible"]),
         "collectorCount": result["collectorCount"],

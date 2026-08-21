@@ -22,6 +22,12 @@
     </div>
   </div>
   <div class="topstats" id="topstats"></div>
+  <div class="topactions">
+    <button class="btn-ledger" id="ledgerBtn" title="Delivery ledger">
+      &#128220; Ledger <span class="ledger-count" id="ledgerCount">0</span>
+    </button>
+    <button class="btn-theme" id="themeBtn" title="Toggle light/dark mode">&#127769;</button>
+  </div>
   <div class="topdate" id="topdate"></div>
 </header>
 
@@ -48,7 +54,7 @@
 
         <label for="regAddr">Address</label>
         <input id="regAddr" placeholder="e.g. 2305 India St, San Diego">
-        <div class="reg-hint" id="regGeo">We&rsquo;ll look this up when you submit.</div>
+        <div class="reg-hint" id="regGeo">Type your address and press Enter.</div>
       </div>
 
       <div class="reg-for" id="regFor" hidden></div>
@@ -56,7 +62,7 @@
       <div class="reg-row">
         <div>
           <label for="regLbs">Pounds</label>
-          <input id="regLbs" type="number" min="1" step="1" value="40" required>
+          <input id="regLbs" type="number" min="1" step="1" value="40">
         </div>
         <div>
           <label for="regKind">Food</label>
@@ -71,29 +77,21 @@
       <input id="regItems" placeholder="e.g. plated entrees, service line overage">
 
       <div class="reg-row">
-        <div>
-          <label for="regFrom">Pickup from</label>
-          <input id="regFrom" type="time" value="18:30">
-        </div>
-        <div>
-          <label for="regTo">Pickup by</label>
-          <input id="regTo" type="time" value="20:30">
-        </div>
+        <div><label for="regFrom">Pickup from</label>
+          <input id="regFrom" type="time" value="18:30"></div>
+        <div><label for="regTo">Pickup by</label>
+          <input id="regTo" type="time" value="20:30"></div>
       </div>
 
       <div class="reg-row">
-        <div>
-          <label for="regExp">Good until</label>
-          <input id="regExp" type="time" value="22:00">
-        </div>
-        <div>
-          <label for="regFresh">Condition</label>
+        <div><label for="regExp">Good until</label>
+          <input id="regExp" type="time" value="22:00"></div>
+        <div><label for="regFresh">Condition</label>
           <select id="regFresh">
             <option value="fresh">Fresh &mdash; just came off the line</option>
             <option value="good">Good &mdash; held properly</option>
             <option value="use_soon">Use soon &mdash; near its limit</option>
-          </select>
-        </div>
+          </select></div>
       </div>
 
       <div class="reg-actions">
@@ -111,8 +109,9 @@
 
     <div class="feed-list" id="feed"></div>
     </div>
-
-    <div class="feed-foot" id="feedFoot"></div>
+    <div class="feed-foot">
+      <span class="dot dot-quiet"></span> 17 more partners on the map reported no surplus tonight
+    </div>
   </aside>
 
   <!-- ======================= center: live map ========================== -->
@@ -121,6 +120,7 @@
 
     <div class="map-legend">
       <div class="lg-row"><span class="lg-hotspot"></span> Hotspot block &middot; size = need (person&#8209;equivalents)</div>
+      <div class="lg-row"><span class="lg-hotspot lg-served"></span> Hotspot served tonight (at limit)</div>
       <div class="lg-row"><span class="lg-supplier"></span> Supplier reporting surplus</div>
       <div class="lg-row"><span class="lg-supplier lg-quiet"></span> Supplier, quiet tonight</div>
       <div class="lg-row"><span class="lg-agency"></span> Agency HQ (collects &amp; distributes)</div>
@@ -148,6 +148,42 @@
   </aside>
 
 </main>
+
+<!-- ======================= ledger dashboard overlay ==================== -->
+<div class="ledger" id="ledger" hidden>
+  <div class="ledger-inner">
+    <div class="ledger-head">
+      <div>
+        <h2>Delivery ledger</h2>
+        <p class="ledger-sub">Every confirmed dispatch — the donor&rsquo;s receipt trail and
+          tonight&rsquo;s serving limits in one place.</p>
+      </div>
+      <div class="ledger-head-actions">
+        <button class="btn-ghost" id="resetBtn" title="Clear tonight's confirmed deliveries">Reset tonight</button>
+        <button class="btn-ghost" id="ledgerClose">&#10005; Close</button>
+      </div>
+    </div>
+
+    <div class="ledger-tiles" id="ledgerTiles"></div>
+
+    <div class="ledger-grid">
+      <section class="ledger-col">
+        <h3>Delivery log <span class="h-sub">newest first</span></h3>
+        <div id="ledgerLog"></div>
+      </section>
+      <section class="ledger-col">
+        <h3>Donor receipts <span class="h-sub">for tax-deduction records</span></h3>
+        <div class="donor-note">Estimated fair market value at $1.79/lb, toward an
+          IRC &sect;170(e)(3) enhanced deduction. Estimates only &mdash; donors should
+          consult a tax professional.</div>
+        <div id="ledgerDonors"></div>
+        <h3 class="mt">Hotspots served tonight <span class="h-sub">serving limit:
+          <span id="limitLabel"></span> deliveries/night</span></h3>
+        <div id="ledgerServed"></div>
+      </section>
+    </div>
+  </div>
+</div>
 
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 <script src="/static/board/app.js"></script>

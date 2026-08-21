@@ -60,6 +60,17 @@ then locks a route.
 people fed, route miles, net benefit, the reward/cost breakdown, what got ruled
 out and why, and the runners-up.
 
+**Confirm to book it.** A dispatch is a recommendation until you confirm it.
+Confirming issues a receipt, enters the delivery ledger, and marks the hotspot
+served on the map.
+
+**Ledger** (top right). Every confirmed dispatch: tonight's plus the past week.
+Delivery log, donor receipts aggregated for tax records, and which hotspots have
+been served. "Reset tonight" clears the evening; history stays.
+
+**Light / dark** toggle beside it. The choice persists per browser, and the map
+tiles and geometry follow it.
+
 ### Restaurants can register themselves
 
 The **"+ Report surplus · new restaurant"** button takes a name and an address
@@ -98,9 +109,13 @@ preference for either.
 on: `PICKUP_WINDOW_MISSED`, `EXPIRES_BEFORE_SERVED`, `TRANSIT_TOO_LONG`,
 `BLOCK_NEED_MET`, `NO_PREPARED_HANDLING`.
 
-**A ledger** tracks meals committed to each block tonight. A block only holds so
-many people; once its need is met, further deliveries there are refused rather
-than left on a pavement. Six consecutive reports go to six different blocks.
+**Serving limits** come out of the ledger, and they answer two different
+questions. A block only holds so many people, so once its need is met further
+food there is food left on a pavement. And nobody sends five separate vans to
+one corner in an evening, so `MAX_DROPS_PER_NIGHT` caps deliveries per block
+regardless of need remaining. A block hitting either limit leaves the candidate
+pool and turns green on the map; a partially served one only offers what is
+left.
 
 ---
 
@@ -117,6 +132,10 @@ Read from `dataset/`. Sources and provenance in `README_DATA_PROVENANCE.md`;
 | `mobile_pantries.csv` | 14 | Distribution sites, with schedules |
 | `surplus_reports.csv` | — | Tonight's numbers, any supplier. Written by the app |
 | `opted_out_businesses.csv` | — | Businesses that left the platform. Written by the app |
+
+Tonight's confirmed deliveries live in memory and clear with "Reset tonight".
+The previous week's ledger is generated from a seeded draw so the view has a
+yesterday — a platform with no history looks like a prototype.
 
 Plus the raw DSDP event files (`BlockLevel_Counts_Panel261.csv`,
 `Downtown_BlockGrid.geojson`, `DowntownCounts_Monthly.csv`, …) that the derived

@@ -156,6 +156,9 @@ def board():
         _board["suppliers"] = demo_data.load_suppliers()
         _board["agencies"] = demo_data.load_agencies()
         _board["pantries"] = demo_data.load_pantries()
+        _board["history"] = demo_data.load_history(
+            _board["suppliers"], _board["agencies"],
+            _board["pantries"], _board["hotspots"])
     return _board
 
 
@@ -178,6 +181,8 @@ def get_board():
         "agencies": b["agencies"],
         "pantries": b["pantries"],
         "constants": demo_data.CONSTANTS,
+        "history": b["history"],
+        "tonight": dispatch.LEDGER.deliveries,
         "registered": registry.count(),
         "optedOut": registry.optout_count(),
         "now": board_now().strftime("%H:%M"),
@@ -288,16 +293,63 @@ def update_report(supplier_id: str, body: ReportUpdate):
 
 
 @app.post("/api/board/dispatch/{supplier_id}")
-def dispatch_supplier(supplier_id: str, commit: bool = False):
-    """Rank every (collector, hotspot) pair for one report."""
+def dispatch_supplier(supplier_id: str):
+    """Rank every (collector, hotspot) pair for one report.
+
+    A recommendation only. Nothing enters the ledger until it is confirmed.
+    """
     b = board()
     s = _find_supplier(supplier_id)
     result = dispatch.compute(s, b["agencies"], b["pantries"], b["hotspots"],
-                              board_now(), commit=commit)
+                              board_now())
     out = dispatch.serialisable(result)
     out["supplier"] = s
     out["served"] = dispatch.LEDGER.snapshot()
     return out
+
+
+@app.post("/api/board/confirm/{supplier_id}")
+def confirm_dispatch(supplier_id: str):
+    """Book the top dispatch for this report and issue a receipt."""
+    b = board()
+    s = _find_supplier(supplier_id)
+    if supplier_id in dispatch.LEDGER.dispatched_supplier_ids():
+        raise HTTPException(409, f"{s['name']} has already been dispatched tonight")
+
+    result = dispatch.compute(s, b["agencies"], b["pantries"], b["hotspots"],
+                              board_now())
+    if not result["pairs"]:
+        raise HTTPException(422, "no viable dispatch to confirm")
+
+    top = result["pairs"][0]
+    rec = dispatch.LEDGER.confirm(s, top, demo_data.CONSTANTS, board_now())
+    hs = top["hotspot"]
+    closed, why = dispatch.LEDGER.is_closed(hs, demo_data.CONSTANTS)
+    return {
+        "receipt": rec,
+        "hotspot": {"id": hs["id"], "location": hs["location"],
+                    "need": hs["need"],
+                    "remaining": round(dispatch.LEDGER.remaining(hs), 1),
+                    "drops": dispatch.LEDGER.drops(hs["id"]),
+                    "closed": closed, "closedWhy": why},
+        "tonight": dispatch.LEDGER.deliveries,
+    }
+
+
+@app.get("/api/board/ledger")
+def get_ledger():
+    """Past deliveries plus tonight's confirmed ones."""
+    b = board()
+    return {"history": b["history"], "tonight": dispatch.LEDGER.deliveries,
+            "maxDropsPerNight": demo_data.CONSTANTS["MAX_DROPS_PER_NIGHT"],
+            "demoDate": demo_data.CONSTANTS["DEMO_DATE"]}
+
+
+@app.post("/api/board/ledger/reset")
+def reset_ledger():
+    """Clear tonight's confirmed deliveries. History is untouched."""
+    dispatch.LEDGER.reset()
+    return {"reset": True, "tonight": []}
 
 
 @app.delete("/api/board/supplier/{supplier_id}")

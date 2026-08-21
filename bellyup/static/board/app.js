@@ -1,14 +1,15 @@
 /* BellyUp — voluntary surplus reports in, collector→hotspot dispatch out.
 
-   Data and scoring both come from the API now (they used to be baked into
+   Data and scoring both come from the API (they used to be baked into
    data.js). That is what lets a restaurant register mid-demo and lets the
-   engine apply expiry, pickup windows and a per-block delivery ledger — none
-   of which a static file can do. The map, the animation and the result panel
+   engine apply expiry, pickup windows and a server-side ledger — none of
+   which a static file can do. The map, animation, ledger and result panel
    are unchanged. */
 
 "use strict";
 
-let HOTSPOTS = [], SUPPLIERS = [], AGENCIES = [], PANTRIES = [], C = {}, OPTED_OUT = 0;
+let HOTSPOTS = [], SUPPLIERS = [], AGENCIES = [], PANTRIES = [], C = {};
+let HISTORY = [], tonight = [], OPTED_OUT = 0;
 let CANDIDATES = [], REPORTING = [], COLLECTORS = [];
 
 const api = (path, opts) => fetch(path, opts).then(async r => {
@@ -21,6 +22,7 @@ async function loadBoard() {
   const b = await api("/api/board");
   HOTSPOTS = b.hotspots; SUPPLIERS = b.suppliers;
   AGENCIES = b.agencies; PANTRIES = b.pantries; C = b.constants;
+  HISTORY = b.history || []; tonight = b.tonight || [];
   OPTED_OUT = b.optedOut || 0;
   CANDIDATES = HOTSPOTS.filter(h => h.need >= C.MIN_CANDIDATE_NEED);
   REPORTING = SUPPLIERS.filter(s => s.report);
@@ -49,91 +51,136 @@ function haversineMi(a, b) {
 }
 const roadMi = (a, b) => haversineMi(a, b) * C.ROAD_FACTOR;
 
+/* ------------------------------------------------------------------ theme */
+/* Light is the default. The choice persists per browser. Map geometry reads
+   the --c-* tokens so both themes drive colors from styles.css. */
+const TILE_URLS = {
+  light: "https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png",
+  dark: "https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png",
+};
+let theme = "light";
+try { theme = localStorage.getItem("bellyup.theme") || "light"; } catch (e) { /* private mode */ }
+applyThemeAttr();
+
+function applyThemeAttr() {
+  if (theme === "dark") document.documentElement.setAttribute("data-theme", "dark");
+  else document.documentElement.removeAttribute("data-theme");
+}
+function themeColor(token) {
+  return getComputedStyle(document.documentElement).getPropertyValue(token).trim();
+}
+
+/* ----------------------------------------------------------------- ledger */
+/* HISTORY is the past week, read-only. `tonight` is what has been CONFIRMED
+   this evening; both come from the server, so a reload does not lose the
+   evening and two people watching see the same board. */
+const dispatchedSupplierIds = () => new Set(tonight.map(r => r.supplierId));
+const servedMealsTonight = hid =>
+  tonight.filter(r => r.hotspotId === hid).reduce((t, r) => t + r.servedMeals, 0);
+const dropsTonight = hid => tonight.filter(r => r.hotspotId === hid).length;
+function hotspotClosed(h) {
+  if (h.need < C.MIN_CANDIDATE_NEED) return false;   // never in the pool
+  return dropsTonight(h.id) >= C.MAX_DROPS_PER_NIGHT ||
+    h.need - servedMealsTonight(h.id) < 1;
+}
+
 /* ------------------------------------------------------- matching engine */
 /* Lives on the server now: bellyup/dispatch.py. Same reward−cost shape, with
-   freshness decay, expiry and pickup-window constraints layered on, plus a
-   ledger so a block that has had its need met stops winning.
+   freshness decay, expiry and pickup-window constraints layered on, plus the
+   serving limits (need met, or MAX_DROPS_PER_NIGHT deliveries to one block).
 
      net    = reward − cost
      reward = served × MEAL_VALUE × accessBoost × freshness
               + surplus × MEAL_VALUE × 0.5
      cost   = (drive + handling) × WAGE_PER_HR + road miles × COST_PER_MILE  */
-const dispatchFor = (s, commit) =>
-  api(`/api/board/dispatch/${s.id}?commit=${commit ? "true" : "false"}`, { method: "POST" });
+const dispatchFor = s => api(`/api/board/dispatch/${s.id}`, { method: "POST" });
 
 /* ------------------------------------------------------------------- map */
 const map = L.map("map", { zoomControl: true, attributionControl: true });
-L.tileLayer("https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png", {
+const tiles = L.tileLayer(TILE_URLS[theme], {
   attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OSM</a> &copy; <a href="https://carto.com/">CARTO</a>',
   maxZoom: 19,
 }).addTo(map);
 
-const TRUCK_SVG = '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M3 5h11v9H3zM14 8h4l3 3v3h-7zM6 18a2 2 0 1 0 0-4 2 2 0 0 0 0 4zm11 0a2 2 0 1 0 0-4 2 2 0 0 0 0 4z"/></svg>';
-const typeIcon = { grocery: "🛒", hotel: "🏨", venue: "🏟", health: "🏥", restaurant: "🍽" };
-
 const fxLayer = L.layerGroup().addTo(map);   // scan lines, routes, radar
 const baseLayer = L.layerGroup().addTo(map); // hotspots, collectors, suppliers
 
-/* Everything below used to run at load. It now runs from buildLayers() once
-   /api/board has answered, and again whenever a restaurant registers. */
-const hotspotMarkers = {}, agencyMarkers = {}, pantryMarkers = {}, supplierMarkers = {};
+const TRUCK_SVG = '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M3 5h11v9H3zM14 8h4l3 3v3h-7zM6 18a2 2 0 1 0 0-4 2 2 0 0 0 0 4zm11 0a2 2 0 1 0 0-4 2 2 0 0 0 0 4z"/></svg>';
+const typeIcon = { grocery: "🛒", hotel: "🏨", venue: "🏟", health: "🏥", restaurant: "🍽" };
 
+/* hotspot circles — magenta, sized by need; aqua once served/at limit */
+const hotspotMarkers = {}, agencyMarkers = {}, pantryMarkers = {}, supplierMarkers = {};
+function hotspotStyle(h) {
+  const closed = hotspotClosed(h);
+  const col = closed ? themeColor("--c-route") : themeColor("--c-hotspot");
+  return {
+    radius: 3 + Math.sqrt(h.need) * 2.1,
+    color: col,
+    weight: 1.4,
+    opacity: closed ? 0.9 : 0.8,
+    fillColor: col,
+    fillOpacity: closed ? 0.3 : 0.16 + Math.min(h.need / 40, 0.34),
+  };
+}
+function hotspotTip(h) {
+  const servedNow = servedMealsTonight(h.id);
+  const status = hotspotClosed(h)
+    ? `<br><b style="color:${themeColor("--c-route")}">served tonight — off the candidate list</b>`
+    : servedNow > 0 ? `<br>${fmtInt(servedNow)} meals delivered tonight; ${(h.need - servedNow).toFixed(1)} need remaining` : "";
+  return `<b>${h.location}</b> &middot; ${h.area}` +
+    `<div class="tip-k">need ${h.need.toFixed(1)} person-equivalents &middot; rank #${h.rank}` +
+    `<br>food access ${h.accessDays.toFixed(h.accessDays % 1 ? 1 : 0)} days/week${status}</div>`;
+}
+function refreshHotspots() {
+  for (const h of HOTSPOTS) {
+    if (!hotspotMarkers[h.id]) continue;
+    hotspotMarkers[h.id].setStyle(hotspotStyle(h));
+    hotspotMarkers[h.id].setTooltipContent(hotspotTip(h));
+  }
+}
+
+/* Everything below used to run at load. It now runs from buildLayers() once
+   /api/board has answered, and again whenever the roster changes. */
 function buildLayers() {
   baseLayer.clearLayers();
-  for (const k in supplierMarkers) delete supplierMarkers[k];
+  for (const k of [hotspotMarkers, agencyMarkers, pantryMarkers, supplierMarkers])
+    for (const id in k) delete k[id];
 
   map.fitBounds(L.latLngBounds(HOTSPOTS.map(h => [h.lat, h.lon])).pad(0.12));
 
-/* hotspot circles — magenta, sized by need */
 for (const h of HOTSPOTS) {
-  const m = L.circleMarker([h.lat, h.lon], {
-    radius: 3 + Math.sqrt(h.need) * 2.1,
-    color: "#d55181",
-    weight: 1.4,
-    opacity: 0.8,
-    fillColor: "#d55181",
-    fillOpacity: 0.16 + Math.min(h.need / 40, 0.34),
-    className: "hs-path",
-  }).addTo(baseLayer);
-  m.bindTooltip(
-    `<b>${h.location}</b> &middot; ${h.area}` +
-    `<div class="tip-k">need ${h.need.toFixed(1)} person-equivalents &middot; rank #${h.rank}` +
-    `<br>food access ${h.accessDays.toFixed(h.accessDays % 1 ? 1 : 0)} days/week</div>`,
-    { className: "hs-tip", direction: "top", opacity: 1 }
-  );
+  const m = L.circleMarker([h.lat, h.lon], { ...hotspotStyle(h), className: "hs-path" }).addTo(baseLayer);
+  m.bindTooltip(hotspotTip(h), { className: "hs-tip", direction: "top", opacity: 1 });
   hotspotMarkers[h.id] = m;
 }
 
 /* agency HQ markers */
+const TRUCK_SVG = '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M3 5h11v9H3zM14 8h4l3 3v3h-7zM6 18a2 2 0 1 0 0-4 2 2 0 0 0 0 4zm11 0a2 2 0 1 0 0-4 2 2 0 0 0 0 4z"/></svg>';
 for (const a of AGENCIES) {
-  const m = L.marker([a.lat, a.lon], {
+  L.marker([a.lat, a.lon], {
     icon: L.divIcon({ className: "", html: `<div class="mk-agency" id="col-${a.id}">${TRUCK_SVG}</div>`, iconSize: [26, 26], iconAnchor: [13, 13] }),
     zIndexOffset: 500,
-  }).addTo(baseLayer);
-  m.bindTooltip(
+  }).addTo(baseLayer).bindTooltip(
     `<b>${a.name}</b><div class="tip-k">${a.program}` +
     `<br>${a.acceptsPrepared ? "accepts prepared food" : "packaged/produce"}</div>`,
     { className: "hs-tip", direction: "top", opacity: 1 }
   );
-  agencyMarkers[a.id] = m;
 }
 
 /* mobile pantry sites — violet diamonds; solid = unit available tonight */
 for (const p of PANTRIES) {
   const cls = p.dispatchable ? "mk-pantry" : "mk-pantry idle";
-  const m = L.marker([p.lat, p.lon], {
+  const status = p.dispatchable
+    ? '<br><b class="tip-pantry">mobile unit available tonight</b>'
+    : `<br>${p.whyNot}`;
+  L.marker([p.lat, p.lon], {
     icon: L.divIcon({ className: "", html: `<div class="${cls}" id="col-${p.id}"></div>`, iconSize: [16, 16], iconAnchor: [8, 8] }),
     zIndexOffset: 400,
-  }).addTo(baseLayer);
-  const status = p.dispatchable
-    ? "<br><b style=\"color:#9085e9\">mobile unit available tonight</b>"
-    : `<br>${p.whyNot}`;
-  m.bindTooltip(
+  }).addTo(baseLayer).bindTooltip(
     `<b>${p.name}</b><div class="tip-k">${p.operator} &middot; ${p.program}` +
     `<br>runs ${p.schedule}${status}</div>`,
     { className: "hs-tip", direction: "top", opacity: 1 }
   );
-  pantryMarkers[p.id] = m;
 }
 
 /* supplier markers — the "input markers", always on the map */
@@ -144,15 +191,19 @@ for (const s of SUPPLIERS) {
     zIndexOffset: 700,
   }).addTo(baseLayer);
   const rep = s.report
-    ? `<br><b style="color:#eb6834">${s.report.lbs} lbs</b> ${s.surplus} &middot; reported ${s.report.time}`
+    ? `<br><b class="tip-supplier">${s.report.lbs} lbs</b> ${s.surplus} &middot; reported ${s.report.time}`
     : "<br>no surplus reported tonight";
   m.bindTooltip(
     `<b>${s.name}</b><div class="tip-k">${s.type}${rep}</div>`,
     { className: "hs-tip", direction: "top", opacity: 1 }
   );
-  m.on("click", () => s.report ? selectReport(s) : openForm(s));
-  supplierMarkers[s.id] = m;
+  m.on("click", () => {
+    if (!s.report) return openForm(s);
+    if (dispatchedSupplierIds().has(s.id)) openLedger(); else selectReport(s);
+  });
 }
+
+}   /* ---- end buildLayers() ---- */
 
 /* ------------------------------------------------------------------ feed */
 const rcWindow = r => {
@@ -162,79 +213,82 @@ const rcWindow = r => {
   return bits.length ? `<div class="rc-window">${bits.join(" &middot; ")}</div>` : "";
 };
 
-const feedCards = REPORTING.map(s => `
-  <div class="report-card${s.registered ? " is-new" : ""}" id="card-${s.id}">
-    <div class="rc-top">
-      <span>${typeIcon[s.type] || "🍽"}</span>
-      <span class="rc-name">${s.registered ? '<span class="rc-saved">SAVED</span>' : ""}${
-        s.report.updated ? '<span class="rc-upd">UPDATED</span>' : ""}${s.name}</span>
-      <span class="rc-time">${s.report.time}</span>
-      <button class="rc-edit" data-edit="${s.id}" title="Surplus differs every night — update tonight's numbers">Update</button>
-    </div>
-    <div class="rc-mid">
-      <span class="rc-lbs">${fmtInt(s.report.lbs)} lbs</span>
-      <span class="rc-meals">&asymp; ${fmtInt(s.report.lbs / C.LBS_PER_MEAL)} meals</span>
-      <span class="rc-chip ${s.surplus === "prepared" ? "prepared" : ""}">${s.surplus}</span>
-    </div>
-    <div class="rc-items">${s.report.items}</div>
-    ${rcWindow(s.report)}
-  </div>`).join("");
-
-/* Partners with nothing tonight are not a dead list -- tomorrow they may have
-   something, and reporting it is the whole point of the platform. This rides
-   inside the scrolling feed; .feed-foot is a one-line summary by design. */
-const quietOnes = SUPPLIERS.filter(s => !s.report);
-$("feed").innerHTML = feedCards + (quietOnes.length ? `
-  <div class="quiet-list">
-    <div class="quiet-head">${quietOnes.length} partners &mdash; no surplus tonight</div>
-    ${quietOnes.map(s => `
-      <button class="quiet-row" data-edit="${s.id}">
+function renderFeed() {
+  const done = dispatchedSupplierIds();
+  $("feed").innerHTML = REPORTING.map(s => {
+    const rec = tonight.find(r => r.supplierId === s.id);
+    return `
+    <div class="report-card ${done.has(s.id) ? "done" : ""}" id="card-${s.id}">
+      <div class="rc-top">
         <span>${typeIcon[s.type] || "🍽"}</span>
-        <span class="qr-name">${s.name}</span>
-        <span class="qr-act">report&nbsp;+</span>
-      </button>`).join("")}
-  </div>` : "");
+        <span class="rc-name">${s.registered ? '<span class="rc-saved">SAVED</span>' : ""}${
+          s.report.updated ? '<span class="rc-upd">UPDATED</span>' : ""}${s.name}</span>
+        <span class="rc-time">${s.report.time}</span>
+        <button class="rc-edit" data-edit="${s.id}" title="Surplus differs every night — update tonight's numbers">Update</button>
+      </div>
+      <div class="rc-mid">
+        <span class="rc-lbs">${s.report.lbs} lbs</span>
+        <span class="rc-meals">&asymp; ${fmtInt(s.report.lbs / C.LBS_PER_MEAL)} meals</span>
+        <span class="rc-chip ${s.surplus === "prepared" ? "prepared" : ""}">${s.surplus}</span>
+      </div>
+      <div class="rc-items">${s.report.items}</div>
+      ${rcWindow(s.report)}
+      ${rec ? `<div class="rc-done">✓ dispatched &middot; ${agShort({ name: rec.collector })} &rarr; ${rec.hotspot}</div>` : ""}
+    </div>`;
+  }).join("");
+  /* Partners with nothing tonight are not a dead list — tomorrow they may
+     have something, and reporting it is the whole point of the platform. */
+  const quietOnes = SUPPLIERS.filter(s => !s.report);
+  if (quietOnes.length) {
+    $("feed").insertAdjacentHTML("beforeend", `
+      <div class="quiet-list">
+        <div class="quiet-head">${quietOnes.length} partners &mdash; no surplus tonight</div>
+        ${quietOnes.map(s => `
+          <button class="quiet-row" data-edit="${s.id}">
+            <span>${typeIcon[s.type] || "🍽"}</span>
+            <span class="qr-name">${s.name}</span>
+            <span class="qr-act">report&nbsp;+</span>
+          </button>`).join("")}
+      </div>`);
+  }
 
-for (const s of REPORTING) {
-  $("card-" + s.id).addEventListener("click", ev => {
-    if (ev.target.dataset.edit) return;      /* Update button handles itself */
-    selectReport(s);
+  for (const s of REPORTING) {
+    $("card-" + s.id).addEventListener("click", ev => {
+      if (ev.target.dataset.edit) return;          /* Update handles itself */
+      if (dispatchedSupplierIds().has(s.id)) openLedger(); else selectReport(s);
+    });
+  }
+  $("feed").querySelectorAll("[data-edit]").forEach(btn => {
+    btn.addEventListener("click", ev => {
+      ev.stopPropagation();
+      openForm(SUPPLIERS.find(x => x.id === btn.dataset.edit));
+    });
   });
-}
-$("feed").querySelectorAll("[data-edit]").forEach(btn => {
-  btn.addEventListener("click", ev => {
-    ev.stopPropagation();
-    openForm(SUPPLIERS.find(x => x.id === btn.dataset.edit));
-  });
-});
-
-$("feedFoot").innerHTML = (quietOnes.length
-  ? `<span class="dot dot-quiet"></span> ${quietOnes.length} partners quiet tonight &middot;
-     click one above to report for them`
-  : `<span class="dot dot-quiet"></span> every partner has reported tonight`)
-  + (OPTED_OUT ? ` &middot; <button class="foot-restore" id="footRestore">${OPTED_OUT} left the
-      platform &mdash; undo</button>` : "");
-if (OPTED_OUT) {
-  $("footRestore").addEventListener("click", async () => {
-    await api("/api/board/restore", { method: "POST" });
-    await refreshFeed();
-  });
+  for (const s of REPORTING) {
+    const el = $("sp-" + s.id);
+    if (el) el.classList.toggle("dispatched", done.has(s.id));
+  }
 }
 
 /* --------------------------------------------------------------- topbar */
-const totLbs = REPORTING.reduce((t, s) => t + s.report.lbs, 0);
-$("topstats").innerHTML = [
-  [fmtInt(totLbs) + " lbs", "reported tonight"],
-  ["~" + fmtInt(totLbs / C.LBS_PER_MEAL), "potential meals"],
-  [REPORTING.length, "active reports"],
-  [CANDIDATES.length, "blocks in need"],
-].map(([v, k]) => `<div class="stat-chip"><div class="v">${v}</div><div class="k">${k}</div></div>`).join("");
-
-}   /* ---- end buildLayers() ---- */
+function renderStats() {
+  const totLbs = REPORTING.reduce((t, s) => t + s.report.lbs, 0);
+  const fed = tonight.reduce((t, r) => t + r.servedMeals, 0);
+  $("topstats").innerHTML = [
+    [fmtInt(totLbs) + " lbs", "reported tonight"],
+    ["~" + fmtInt(totLbs / C.LBS_PER_MEAL), "potential meals"],
+    [REPORTING.length - tonight.length, "pending reports"],
+    [fmtInt(fed), "people fed tonight"],
+  ].map(([v, k]) => `<div class="stat-chip"><div class="v">${v}</div><div class="k">${k}</div></div>`).join("");
+  $("ledgerCount").textContent = tonight.length;
+}
+$("topdate").textContent = new Date().toLocaleDateString("en-US",
+  { weekday: "short", month: "short", day: "numeric", year: "numeric" });
 
 /* ------------------------------------------------- selection + animation */
 let animToken = 0;
 let selectedId = null;
+let currentMatch = null;   // { supplier, result } for the confirm button
 
 function clearFx() {
   fxLayer.clearLayers();
@@ -262,12 +316,11 @@ async function selectReport(s, opts = {}) {
   const pin = $("sp-" + s.id);
   if (pin) pin.classList.add("selected");
 
-  /* Scoring is a round trip now, so kick the animation off immediately and let
-     the result land into it. On a local server it arrives long before the scan
-     finishes; the token guard covers the case where it does not. */
+  /* Scoring is a round trip now. On a local server the answer lands long
+     before the scan animation would finish; the token guard covers the rest. */
   let result;
   try {
-    result = await dispatchFor(s, opts.commit !== false);
+    result = await dispatchFor(s);
   } catch (err) {
     $("resultEmpty").style.display = "";
     $("resultBody").hidden = true;
@@ -275,6 +328,7 @@ async function selectReport(s, opts = {}) {
     return;
   }
   if (token !== animToken) return;
+  currentMatch = { supplier: s, result };
   runTriangulation(s, result, token);
 }
 
@@ -298,7 +352,7 @@ function runTriangulation(s, result, token) {
   /* calc overlay */
   const constraint = result.prepared
     ? `constraint: prepared food &rarr; ${result.eligibleCount} of ${result.collectorCount} collectors eligible`
-    : `${result.eligibleCount} collectors &times; ${result.candidateCount} blocks`;
+    : `${result.eligibleCount} collectors &times; ${result.candidateCount} open blocks`;
   $("calcTitle").textContent = "TRIANGULATING";
   $("calcLine").innerHTML = `${s.name} &middot; ${constraint}`;
   $("calcOverlay").classList.add("show");
@@ -315,12 +369,14 @@ function runTriangulation(s, result, token) {
   })(t0);
 
   /* scan lines: quick flicks from the supplier to sampled candidate blocks */
-  const sample = [...CANDIDATES].sort(() => Math.random() - 0.5).slice(0, 26);
+  const openIds = new Set(result.pairs.map(p => p.hotspot.id));
+  const sample = CANDIDATES.filter(h => openIds.has(h.id)).sort(() => Math.random() - 0.5).slice(0, 26);
   sample.forEach((h, i) => {
     setTimeout(() => {
       if (!live()) return;
       const line = L.polyline([[s.lat, s.lon], [h.lat, h.lon]], {
-        color: "#eb6834", weight: 1.3, opacity: 0.9, className: "scan-line", interactive: false,
+        color: themeColor("--c-supplier"), weight: 1.3, opacity: 0.9,
+        className: "scan-line", interactive: false,
       });
       fxLayer.addLayer(line);
       setTimeout(() => fxLayer.removeLayer(line), 520);
@@ -329,11 +385,11 @@ function runTriangulation(s, result, token) {
     }, 90 + i * (SCAN_MS - 200) / sample.length);
   });
 
-  /* shortlist: top-3 hotspots pulse while agencies are weighed */
+  /* shortlist: top-3 hotspots pulse while collectors are weighed */
   setTimeout(() => {
     if (!live()) return;
     $("calcTitle").textContent = "SHORTLISTING";
-    $("calcLine").innerHTML = "weighing need, access gap and deployment cost";
+    $("calcLine").innerHTML = "weighing need, access gap, serving limits and deployment cost";
     const seen = new Set(), top = [];
     for (const p of result.pairs) {
       if (!seen.has(p.hotspot.id)) { seen.add(p.hotspot.id); top.push(p.hotspot); }
@@ -341,7 +397,8 @@ function runTriangulation(s, result, token) {
     }
     for (const h of top) {
       fxLayer.addLayer(L.polyline([[s.lat, s.lon], [h.lat, h.lon]], {
-        color: "#d55181", weight: 2, opacity: 0.85, className: "short-line", interactive: false,
+        color: themeColor("--c-hotspot"), weight: 2, opacity: 0.85,
+        className: "short-line", interactive: false,
       }));
     }
   }, SCAN_MS);
@@ -359,11 +416,13 @@ function runTriangulation(s, result, token) {
 
     const a = best.collector, h = best.hotspot;
     fxLayer.addLayer(L.polyline([[a.lat, a.lon], [s.lat, s.lon]], {
-      color: a.kind === "pantry" ? "#9085e9" : "#3987e5",
+      color: themeColor(a.kind === "pantry" ? "--c-pantry" : "--c-agency"),
+      bellyRole: a.kind === "pantry" ? "--c-pantry" : "--c-agency",
       weight: 2.5, opacity: 0.85, className: "route-leg1", interactive: false,
     }));
     fxLayer.addLayer(L.polyline([[s.lat, s.lon], [h.lat, h.lon]], {
-      color: "#1baf7a", weight: 3.5, opacity: 0.95, className: "route-leg2", interactive: false,
+      color: themeColor("--c-route"), bellyRole: "--c-route",
+      weight: 3.5, opacity: 0.95, className: "route-leg2", interactive: false,
     }));
     $("col-" + a.id).classList.add("winner");
     const hEl = hotspotMarkers[h.id].getElement();
@@ -382,21 +441,21 @@ function renderResult(s, result) {
   const h = b.hotspot, a = b.collector;
   const isPantry = a.kind === "pantry";
   const boostPct = Math.round((b.boost - 1) * 100);
-  const freshPct = Math.round(b.freshness * 100);
   const fmv = result.fmv;
+  const freshPct = Math.round(b.freshness * 100);
+  const servedBefore = servedMealsTonight(h.id);
 
   /* alternates: next best pairs with a distinct collector or hotspot */
   const alts = [];
   for (const p of result.pairs.slice(1)) {
     if (alts.length === 3) break;
-    /* compare by id: these came off the wire, so they are not the same object
-       instances the identity check used to rely on */
+    /* compare by id: these came off the wire, not from the same objects */
     if (p.collector.id !== a.id || p.hotspot.id !== h.id) alts.push(p);
   }
 
   $("resultBody").innerHTML = `
     <div class="rb-eyebrow">Dispatch recommendation</div>
-    <div class="rb-source">from <b>${s.name}</b> &middot; ${fmtInt(s.report.lbs)} lbs ${s.surplus}
+    <div class="rb-source">from <b>${s.name}</b> &middot; ${s.report.lbs} lbs ${s.surplus}
       &middot; ${fmtInt(result.meals)} meals &middot; reported ${result.reportedAt}
       <br>pickup window ${result.window.from}&ndash;${result.window.to}
       &middot; good until ${result.expiresAt}
@@ -427,7 +486,8 @@ function renderResult(s, result) {
           <div class="pn-role">Distribution hotspot</div>
           <div class="pn-name">${h.location} &middot; ${h.area}</div>
           <div class="pn-sub">need ${h.need.toFixed(1)} &middot; rank #${h.rank} of 382
-            &middot; food access ${h.accessDays.toFixed(h.accessDays % 1 ? 1 : 0)} d/wk</div>
+            &middot; food access ${h.accessDays.toFixed(h.accessDays % 1 ? 1 : 0)} d/wk${
+              servedBefore > 0 ? ` &middot; ${fmtInt(servedBefore)} meals already tonight` : ""}</div>
         </div>
       </div>
     </div>
@@ -453,11 +513,16 @@ function renderResult(s, result) {
         <span class="sv-val">${fmt$(b.net)}</span></div>
     </div>
 
+    <button class="btn-confirm" id="confirmBtn">✓ Confirm dispatch &amp; log receipt</button>
+
     <div class="rb-note">⏱ <b>${b.hoursToPeople}h from report to served</b> —
       arrives ${b.arrivesAt}, ${freshPct}% of its value intact against a
       ${result.expiresAt} expiry. Reward is scaled by that.</div>
     ${result.prepared ? `<div class="rb-note">🍛 <b>Prepared food</b> — only collectors that accept
       prepared meals were considered (${result.eligibleCount} of ${result.collectorCount}).</div>` : ""}
+    ${servedBefore > 0 ? `<div class="rb-note">🎯 <b>Serving limit</b> — this block already received
+      ${fmtInt(servedBefore)} meals tonight; only its remaining need of ${b.remaining.toFixed(1)}
+      counts toward the reward.</div>` : ""}
     ${boostPct > 0 ? `<div class="rb-note">⚡ <b>Access-gap boost +${boostPct}%</b> — this block has
       scheduled food access only ${h.accessDays.toFixed(h.accessDays % 1 ? 1 : 0)} days/week, so its
       reward is weighted up.</div>` : ""}
@@ -468,8 +533,8 @@ function renderResult(s, result) {
       remaining <b>${fmtInt(b.surplus)} meals</b> ${isPantry
         ? `stock ${agShort(a)}&rsquo;s next scheduled distribution`
         : `ride along to ${agShort(a)}&rsquo;s pantry network`}.</div>` : ""}
-    <div class="rb-note tax">🧾 Donation logged for <b>${s.name}</b> — est. deductible fair market
-      value <b>${fmt$(fmv)}</b> (${s.report.lbs} lbs &times; $${C.FMV_PER_LB}/lb).</div>
+    <div class="rb-note tax">🧾 Confirming logs a receipt for <b>${s.name}</b> — est. deductible
+      fair market value <b>${fmt$(fmv)}</b> (${s.report.lbs} lbs &times; $${C.FMV_PER_LB}/lb).</div>
 
     <table class="rb-table">
       <tr><td>${isPantry ? "Site" : "HQ"} &rarr; pickup &rarr; hotspot</td><td>${b.leg1.toFixed(1)} + ${b.leg2.toFixed(1)} mi</td></tr>
@@ -496,13 +561,11 @@ function renderResult(s, result) {
       <div class="model-body"><em>net = reward − cost</em>
 collectors = agency trucks (${C.AGENCY_CAPACITY_LBS} lb) + pantry
   units on site tonight (${C.PANTRY_CAPACITY_LBS} lb van)
-reward = min(collected meals, need remaining tonight)
-         × $${C.MEAL_VALUE}/meal × accessBoost × freshness
+serving limit = ${C.MAX_DROPS_PER_NIGHT} deliveries/hotspot/night; served
+  blocks leave the pool, partial blocks count remaining need
+reward = min(collected meals, remaining need) × $${C.MEAL_VALUE}/meal × accessBoost
          + overflow meals × $${C.MEAL_VALUE} × 0.5 (pantry)
 accessBoost = 1 + ${C.ACCESS_BOOST_MAX} × (7 − access days/wk)/7
-freshness   = ${C.FRESHNESS_FLOOR} + ${(1 - C.FRESHNESS_FLOOR).toFixed(2)} × (life left at arrival)
-rejects: pickup window missed, expires before served,
-         run over ${C.MAX_TRANSIT_MIN.prepared} min (prepared), block need already met
 cost = (drive + ${C.HANDLING_MIN} min) × $${C.WAGE_PER_HR}/hr        [SD min. wage 2026]
        + road miles × $${C.COST_PER_MILE}/mi              [IRS rate 2026]
 meals = lbs ÷ ${C.LBS_PER_MEAL}                        [Feeding America]
@@ -510,13 +573,14 @@ distances: haversine × ${C.ROAD_FACTOR} at ${C.AVG_SPEED_MPH} mph city speed</d
     </details>`;
 
   $("resultBody").hidden = false;
+  $("confirmBtn").addEventListener("click", confirmDispatch);
 
   /* count-up + bar-grow animations */
   const maxBar = Math.max(b.reward, b.cost, 1);
   requestAnimationFrame(() => {
     document.querySelectorAll(".sv-fill").forEach(el => {
       el.style.width = el.dataset.pct !== undefined
-        ? el.dataset.pct + "%"                       /* freshness is already a % */
+        ? el.dataset.pct + "%"                      /* freshness is already a % */
         : (parseFloat(el.dataset.w) / maxBar * 100) + "%";
     });
   });
@@ -533,13 +597,141 @@ distances: haversine × ${C.ROAD_FACTOR} at ${C.AVG_SPEED_MPH} mph city speed</d
   });
 }
 
-/* ============================================ report in / update / boot */
-/* The form does two jobs. A restaurant that is not on the platform registers
-   and reports in one step; one that already is updates TONIGHT's numbers.
-   Surplus is different every night -- a fixed quantity per partner would make
-   the feed a fixture, which is the opposite of voluntary daily reporting. */
+/* ------------------------------------------------------------ confirming */
+async function confirmDispatch() {
+  if (!currentMatch) return;
+  const { supplier: s } = currentMatch;
+  if (dispatchedSupplierIds().has(s.id)) return;
 
-let formMode = "register";   // 'register' | 'edit'
+  const btn = $("confirmBtn");
+  if (btn) { btn.disabled = true; btn.textContent = "Confirming…"; }
+
+  let res;
+  try {
+    res = await api(`/api/board/confirm/${s.id}`, { method: "POST" });
+  } catch (e) {
+    if (btn) { btn.disabled = false; btn.textContent = "Confirm dispatch"; }
+    return;
+  }
+
+  tonight = res.tonight;
+  refreshHotspots();
+  renderFeed();
+  renderStats();
+  $("ledgerCount").textContent = tonight.length;
+
+  const h = res.hotspot;
+  if (btn) btn.outerHTML = `<div class="confirmed-note">✓ Dispatched — receipt ${res.receipt.receipt} logged
+    <div class="cn-sub">${h.location} ${h.closed
+      ? (h.closedWhy === "drops"
+          ? `has had its ${C.MAX_DROPS_PER_NIGHT} deliveries for tonight and leaves the candidate pool`
+          : "is now fully served tonight and leaves the candidate pool")
+      : `has ${h.remaining} need remaining tonight`}</div></div>`;
+}
+
+/* ---------------------------------------------------------------- ledger */
+function renderLedger() {
+  const all = [...tonight].reverse().map(r => ({ ...r, isTonight: true }))
+    .concat([...HISTORY].reverse());
+  const grand = [...HISTORY, ...tonight];
+
+  const totalLbs = grand.reduce((t, r) => t + r.lbs, 0);
+  const totalFmv = grand.reduce((t, r) => t + r.fmv, 0);
+  const totalFed = grand.reduce((t, r) => t + r.servedMeals, 0);
+  $("ledgerTiles").innerHTML = [
+    [fmtInt(grand.length), "deliveries logged", ""],
+    [fmtInt(tonight.length), "tonight", "lt-route"],
+    [fmtInt(totalLbs) + " lbs", "food recovered", ""],
+    [fmtInt(totalFed), "people fed", "lt-route"],
+    ["$" + fmtInt(totalFmv), "est. FMV deductions", "lt-good"],
+  ].map(([v, k, cls]) => `<div class="lt ${cls}"><div class="v">${v}</div><div class="k">${k}</div></div>`).join("");
+
+  $("ledgerLog").innerHTML = all.length ? all.map(r => `
+    <div class="receipt ${r.isTonight ? "tonight" : ""}">
+      <div class="rt-top">
+        <span class="rt-id">${r.receipt}</span>
+        ${r.isTonight ? '<span class="rt-badge">tonight</span>' : ""}
+        <span class="rt-when">${r.date} &middot; ${r.time}</span>
+      </div>
+      <div class="rt-flow"><b>${r.supplier}</b> <span class="rt-arrow">&rarr;</span>
+        ${r.kind === "pantry" ? "🚐" : "🚚"} ${agShort({ name: r.collector })}
+        <span class="rt-arrow">&rarr;</span> 📍 ${r.hotspot}</div>
+      <div class="rt-nums">
+        <span><b>${r.lbs}</b> lbs donated</span>
+        <span><b>${r.servedMeals}</b> people fed</span>
+        <span class="fmv">est. FMV <b>${fmt$(r.fmv)}</b></span>
+        <span>net ${fmt$(r.net)}</span>
+      </div>
+    </div>`).join("") : '<div class="served-empty">No deliveries logged yet.</div>';
+
+  /* donor tax summary */
+  const byDonor = {};
+  for (const r of grand) {
+    (byDonor[r.supplier] ||= { n: 0, lbs: 0, fmv: 0 });
+    byDonor[r.supplier].n++; byDonor[r.supplier].lbs += r.lbs; byDonor[r.supplier].fmv += r.fmv;
+  }
+  const donors = Object.entries(byDonor).sort((a, b) => b[1].fmv - a[1].fmv);
+  $("ledgerDonors").innerHTML = `
+    <table class="donor-table">
+      <tr><th>Donor</th><th>Deliveries</th><th>Lbs</th><th>Est. FMV</th></tr>
+      ${donors.map(([name, d]) => `
+        <tr><td>${name}</td><td>${d.n}</td><td>${fmtInt(d.lbs)}</td>
+        <td class="fmv">${fmt$(d.fmv)}</td></tr>`).join("")}
+    </table>`;
+
+  /* hotspots served tonight */
+  $("limitLabel").textContent = C.MAX_DROPS_PER_NIGHT;
+  const servedIds = [...new Set(tonight.map(r => r.hotspotId))];
+  $("ledgerServed").innerHTML = servedIds.length ? servedIds.map(hid => {
+    const h = HOTSPOTS.find(x => x.id === hid);
+    const meals = servedMealsTonight(hid), drops = dropsTonight(hid);
+    const closed = hotspotClosed(h);
+    return `
+    <div class="served-row">
+      <div class="sr-top">
+        <span class="sr-loc">${h.location}</span>
+        ${closed ? '<span class="sr-limit">at limit</span>' : ""}
+        <span class="sr-stat">${fmtInt(meals)}/${h.need.toFixed(0)} meals &middot; ${drops}/${C.MAX_DROPS_PER_NIGHT} drops</span>
+      </div>
+      <div class="sr-bar"><span style="width:${Math.min(meals / h.need * 100, 100)}%"></span></div>
+    </div>`;
+  }).join("") : '<div class="served-empty">Nothing served yet tonight — every block is still in the pool.</div>';
+}
+
+function openLedger() { renderLedger(); $("ledger").hidden = false; }
+$("ledgerBtn").addEventListener("click", openLedger);
+$("ledgerClose").addEventListener("click", () => { $("ledger").hidden = true; });
+$("ledger").addEventListener("click", e => { if (e.target === $("ledger")) $("ledger").hidden = true; });
+$("resetBtn").addEventListener("click", () => {
+  tonight = [];
+  saveTonight();
+  location.reload();
+});
+
+/* ----------------------------------------------------------- theme toggle */
+function setThemeButton() {
+  $("themeBtn").textContent = theme === "dark" ? "☀️" : "🌙";
+  $("themeBtn").title = theme === "dark" ? "Switch to light mode" : "Switch to dark mode";
+}
+$("themeBtn").addEventListener("click", () => {
+  theme = theme === "dark" ? "light" : "dark";
+  try { localStorage.setItem("bellyup.theme", theme); } catch (e) { /* best effort */ }
+  applyThemeAttr();
+  setThemeButton();
+  tiles.setUrl(TILE_URLS[theme]);
+  refreshHotspots();
+  fxLayer.eachLayer(l => {
+    if (l.options.bellyRole && l.setStyle) l.setStyle({ color: themeColor(l.options.bellyRole) });
+  });
+});
+
+/* ============================================ report in / update / boot */
+/* The form does two jobs. A restaurant not yet on the platform registers and
+   reports in one step; one already on it revises TONIGHT's numbers. Surplus
+   differs every night — a fixed quantity per partner would make the feed a
+   fixture rather than a report. */
+
+let formMode = "register";
 let formTarget = null;
 
 function openForm(supplier) {
@@ -568,9 +760,9 @@ function openForm(supplier) {
 
   if (isEdit) {
     const r = supplier.report;
-    $("regFor").innerHTML = `<b>${supplier.name}</b><br>${supplier.address}` +
-      (supplier.registered ? "<br>saved to the restaurant dataset" : "") +
-      (r ? "" : "<br>no surplus reported yet tonight");
+    $("regFor").innerHTML = `<b>${supplier.name}</b><br>${supplier.address}`
+      + (supplier.registered ? "<br>saved to the restaurant dataset" : "")
+      + (r ? "" : "<br>no surplus reported yet tonight");
     $("regKind").value = supplier.surplus || "prepared";
     $("regLbs").value = r ? r.lbs : 40;
     $("regItems").value = r ? (r.items || "") : "";
@@ -586,7 +778,7 @@ function openForm(supplier) {
     $("regItems").value = "";
     $("regLbs").value = 40;
     $("regGeo").className = "reg-hint";
-    $("regGeo").textContent = "We'll look this up when you submit.";
+    $("regGeo").textContent = "Type your address and press Enter.";
     $("regName").focus();
   }
   form.scrollIntoView({ block: "start", behavior: "smooth" });
@@ -600,25 +792,29 @@ function closeForm() {
   formMode = "register";
 }
 
-async function refreshFeed() {
+async function refreshAll() {
   await loadBoard();
   buildLayers();
+  renderFeed();
+  renderStats();
+  refreshHotspots();
+  $("ledgerCount").textContent = tonight.length;
 }
 
-function wireRegistration() {
+function wireForm() {
   const form = $("regForm");
 
   $("regOpen").addEventListener("click", () => openForm(null));
   $("regCancel").addEventListener("click", closeForm);
 
-  /* resolve the address as they leave the field, so a bad one is caught before
-     they submit rather than after */
+  /* resolve the address as they leave the field, so a bad one is caught
+     before they submit rather than after */
   $("regAddr").addEventListener("change", async e => {
     const q = e.target.value.trim();
     const hint = $("regGeo");
     if (!q) {
       hint.className = "reg-hint";
-      hint.textContent = "We'll look this up when you submit.";
+      hint.textContent = "Type your address and press Enter.";
       return;
     }
     hint.className = "reg-hint";
@@ -640,24 +836,19 @@ function wireRegistration() {
   /* "nothing tonight" is a real answer, not a missing one */
   $("regNone").addEventListener("click", async () => {
     if (!formTarget) return;
+    const id = formTarget.id;
     try {
-      await api(`/api/board/report/${formTarget.id}`, {
+      await api(`/api/board/report/${id}`, {
         method: "POST", headers: { "content-type": "application/json" },
         body: JSON.stringify({ has_surplus: false }),
       });
-      const cleared = formTarget.id;
       closeForm();
-      await refreshFeed();
-      if (selectedId === cleared) {
-        selectedId = null;
-        clearFx();
-        $("resultBody").hidden = true;
-        $("resultEmpty").style.display = "";
-      }
     } catch (e) {
       $("regErr").textContent = e.message;
       $("regErr").hidden = false;
     }
+    await refreshAll();
+    if (selectedId === id) { selectedId = null; clearFx(); showEmpty(); }
   });
 
   $("regRemove").addEventListener("click", async () => {
@@ -667,19 +858,13 @@ function wireRegistration() {
       await api(`/api/board/supplier/${gone}`, { method: "DELETE" });
       closeForm();
     } catch (e) {
-      /* Most likely the page is holding a supplier the server no longer has.
-         Say so and resync rather than leaving a dead error in the form. */
+      /* most likely the page holds a supplier the server no longer has */
       $("regErr").textContent = e.message + " — refreshing the feed.";
       $("regErr").hidden = false;
       setTimeout(closeForm, 1400);
     }
-    await refreshFeed();
-    if (selectedId === gone) {
-      selectedId = null;
-      clearFx();
-      $("resultBody").hidden = true;
-      $("resultEmpty").style.display = "";
-    }
+    await refreshAll();
+    if (selectedId === gone) { selectedId = null; clearFx(); showEmpty(); }
   });
 
   form.addEventListener("submit", async ev => {
@@ -725,9 +910,8 @@ function wireRegistration() {
         });
         supplier = res.supplier;
       }
-
       closeForm();
-      await refreshFeed();
+      await refreshAll();
       selectedId = null;
       await selectReport(supplier, { force: true });
     } catch (e2) {
@@ -740,18 +924,27 @@ function wireRegistration() {
   });
 }
 
+function showEmpty() {
+  $("resultBody").hidden = true;
+  $("resultEmpty").style.display = "";
+}
+
+/* ------------------------------------------------------------------- boot */
 (async function boot() {
+  setThemeButton();
+  wireForm();          /* static elements — wire before the first fetch, or
+                          the visible button swallows an early click */
   try {
-    /* Wire the form BEFORE the first fetch. It only touches static elements,
-       and leaving it until after meant the visible "Report surplus" button
-       swallowed a click during load. */
-    wireRegistration();
-    const b = await loadBoard();
-    buildLayers();
-    $("topdate").textContent = b.date + " \u00b7 " + b.now;
+    await loadBoard();
   } catch (err) {
     $("resultEmpty").innerHTML =
       `<div class="re-icon">&#9888;</div><p>Could not reach the API.<br>` +
       `Start it with <code>uvicorn app:app --port 8000</code> and reload.</p>`;
+    return;
   }
+  buildLayers();
+  renderFeed();
+  renderStats();
+  refreshHotspots();
+  $("ledgerCount").textContent = tonight.length;
 })();
