@@ -1,35 +1,55 @@
 # BellyUp — Build Spec
 
-*Food supply coordination for nonprofits serving unsheltered San Diegans.*
+*Connecting small restaurants with agencies that feed unsheltered San Diegans.*
 
-**Read this whole file before writing code.** Written to be implemented directly.
+**Status: built and running.** This file describes what exists, not a plan.
+Run it with `cd bellyup && ../.venv/bin/python -m uvicorn app:app --port 8000`
+then open `http://localhost:8000`.
+
+> **Revision note.** This replaces the original spec, which modelled restaurants
+> donating to nonprofits who delivered to food-bank partner sites. That model was
+> retired after a conversation with a San Diego Food Bank contact. What changed
+> and why is recorded in §12, because the reasoning matters more than the diff.
 
 ---
 
 ## 0. What we are building
 
-Restaurants report end-of-day surplus. The platform matches each donation to the best **(nonprofit, destination)** pair — or rejects it with a specific reason — by maximizing need-weighted food value net of the nonprofit's real transport cost.
+A **three-sided platform**. Small restaurants have surplus and no way to move it.
+Agencies have vehicles, food-safety compliance and staff. Unsheltered people are
+measured by the DSDP count but are not app users.
 
-**The match is a triple, not a pair:** `donation × nonprofit × destination`. Many nonprofits are spread across the city; for a given restaurant, one org's HQ may be far closer than another's. Choosing the org is half the optimization.
+```
+small restaurant  --collected by-->  AGENCY  ------------------>  people
+                                       |
+                       fixed pantry:   people walk in
+                       mobile pantry:  goes out to hubspots
+```
 
-**Ranking is not by distance.** It routes toward destinations serving blocks where unsheltered need is **highest and rising**, using the DSDP historical counts, net of what the run actually costs to operate.
+| Side | Sees | Optimised for |
+|---|---|---|
+| **Restaurant** | agencies who will collect | agency cost-efficiency; donor pays nothing |
+| **Agency** | hubspots + scheduled pickups | need-weighted allocation, budgets, ledger |
+| **Person needing food** | pantries, open now first | proximity, opening hours |
 
-**Pitch line:** *The supply is mandated, the demand is measured, and the matching layer is what's missing.*
+**The restaurant pays nothing and carries no transport liability.** It donates
+for the enhanced tax deduction. The agency absorbs the cost of every run — so
+cost efficiency is still what gets optimised, just on the agency's books.
 
-### Parties
+**Pitch line:** *The food is being thrown away, the need is measured, and the
+matching layer is what's missing.*
 
-| Party | Role |
-|---|---|
-| Restaurant / donor | Reports surplus: location, quantity, food type, condition, ready time, expiry |
-| Nonprofit | Owns HQ location, staff wage, vehicle. **Performs pickup and delivery.** |
-| Destination | Where food is delivered: partner site, meal service, day center, or an outreach **hubspot** |
-| People served | Not app users. Represented by block-level need scores from the count data |
+### ⚠ Two things that must not break
 
-### Why restaurants can't self-distribute — state this on stage
+**Hubspots are agency-facing only.** They are block-level locations where
+unsheltered people gather. `/api/agency/*` serves them. The restaurant view and
+the public view never do — `_donor_safe()` strips them, and `pantry_finder`
+returns pantries only. Publishing "food is handed out at 17th & K at 4pm" would
+hand anyone, including someone looking to move people on, a map of where to find
+them. Block aggregation was chosen precisely so the output could not be
+operationalised for enforcement.
 
-Food-safety regulation carries liability restaurants won't take, and dedicating a worker to non-restaurant operations is a cost they won't absorb. SB 1383 is built on the same assumption: it routes mandated donations through *recovery organizations* precisely because they carry the compliance and the staff.
-
-⚠️ **Hubspot handling.** Hubspots are aggregated to **block level**, never precise encampment coordinates, and are visible only on the **nonprofit-facing** side. The donor-facing view confirms that a pickup was accepted — never where it is going. Keep this; it's both the safe design and the defensible one in Q&A.
+**Block need shading is agency-view only** in the UI, for the same reason.
 
 ---
 
@@ -38,353 +58,364 @@ Food-safety regulation carries liability restaurants won't take, and dedicating 
 No build step, no auth, no database.
 
 - **Backend:** Python 3.11 + FastAPI + uvicorn
-- **Data:** pandas, geopandas, shapely
-- **Frontend:** one static `index.html` — vanilla JS + Leaflet (OpenStreetMap tiles, no key)
-- **Storage:** in-memory + CSV/GeoJSON on disk
-- **No accounts, no login.** Pre-seeded personas only.
+- **Data:** pandas, numpy, shapely (no geopandas, no statsmodels)
+- **Frontend:** one static `index.html` — vanilla JS + Leaflet, OSM tiles, no key
+- **Storage:** in-memory + CSV/GeoJSON/JSON on disk
 
 ```
 bellyup/
-  app.py                 # FastAPI routes only
-  economics.py           # cost + benefit model   ← core IP
-  matching.py            # feasibility + ranking  ← core IP
-  needs.py               # block need + forecast from provided data
-  seed.py                # builds nonprofits / destinations / donors
-  data/
-    BlockLevel_Counts_Panel261.csv
-    Downtown_BlockGrid.geojson
-    DowntownCounts_Monthly.csv
-    sd_foodbank_sites.csv
-    nonprofits.json          # generated / hand-curated
-    destinations.json        # generated / hand-curated
+  app.py                  # FastAPI, role-scoped routes
+  needs.py                # block need + area forecast
+  demand.py               # apportioned demand budgets + delivery ledger
+  agencies.py             # agency loader, walk-in vs mobile intake demand
+  economics.py            # cost model, CONFIG, freshness, tax deduction
+  collection.py           # LEG 1 — which agency collects
+  distribution.py         # LEG 2 — mobile pantry run to hubspots
+  pipeline.py             # chains both legs
+  schedule.py             # pickup schedule + agency intake limits
+  pantry_finder.py        # public view
+  rules.py                # shared windows, storage, rejection reporting
+  seed.py                 # hubspots, geocoding
+  sb1383_donors.py        # donor layer from OpenStreetMap
+  simulate_agencies.py    # PLACEHOLDER agency data
+  scenarios.py            # rehearsed demo scenarios
+  run_demo.py             # console harness
+  verify.py               # verification worksheet
+  data/                   # generated: agencies, donors, destinations, geocode cache
   static/index.html
-  README.md
+  AGENCY_SCHEMA.md        # what the real agency roster must contain
 ```
+
+Datasets are read from `../dataset/` — one source of truth, so a re-pull from
+`main` reaches the app with no copy step.
 
 ---
 
 ## 2. Data models
 
 ```python
-# donation
-{
-  "donor_name": str, "lat": float, "lon": float, "address": str,
-  "food_type": "prepared_hot"|"prepared_cold"|"produce"|"packaged_dry"|"bakery"|"dairy",
-  "quantity_lbs": float,
-  "condition": "hot"|"refrigerated"|"frozen"|"ambient",
-  "ready_at": iso8601, "expires_at": iso8601,
-  "sb1383_tier": 1|2|None
-}
+# donation (from a small restaurant)
+{"donor_name": str, "lat": float, "lon": float, "address": str,
+ "food_type": "prepared_hot"|"prepared_cold"|"produce"|"packaged_dry"|"bakery"|"dairy",
+ "quantity_lbs": float, "condition": "hot"|"refrigerated"|"frozen"|"ambient",
+ "ready_at": datetime, "expires_at": datetime}
 
-# nonprofit
-{
-  "org_id": str, "name": str,
-  "hq_lat": float, "hq_lon": float,
-  "wage_per_hour": float,       # loaded driver cost
-  "staff_per_run": int,         # default 1
-  "cost_per_km": float,         # fuel + wear
-  "has_refrigerated_vehicle": bool,
-  "operating_windows": [{"dow": 0-6, "start": "08:00", "end": "17:00"}]
-}
+# agency  (see AGENCY_SCHEMA.md — this is what the real roster must supply)
+{"agency_id": str, "name": str, "lat": float, "lon": float,
+ "has_mobile_pantry": bool,          # THE most important field
+ "mobile_capacity_lbs": float, "mobile_windows": [...], "max_hubspot_stops": int,
+ "collects_donations": bool, "accepts": [...], "storage": {...},
+ "intake_capacity_lbs_per_day": float, "has_refrigerated_vehicle": bool,
+ "wage_per_hour": float, "staff_per_run": int, "cost_per_km": float,
+ "operating_windows": [{"dow": 0-6, "start": "08:00", "end": "17:00",
+                        "weeks_of_month": [1,3]}]}   # weeks_of_month optional
 
-# destination
-{
-  "dest_id": str, "name": str, "lat": float, "lon": float,
-  "dest_type": "food_bank_partner"|"meal_service"|"day_center"|"hubspot",
-  "accepts": ["produce", "packaged_dry", ...],
-  "storage": {"refrigerated": bool, "frozen": bool, "hot_holding": bool},
-  "open_windows": [{"dow": 0-6, "start": "09:00", "end": "11:00"}],
-  "capacity_lbs_per_visit": float,
-  "served_block_ids": [str],
-  "need_now": float, "need_trend": float
-}
-
-# match result  (one per feasible triple)
-{
-  "org_id": str, "org_name": str,
-  "dest_id": str, "dest_name": str,
-  "route_km": {"to_pickup": float, "to_dropoff": float, "return": float, "total": float},
-  "total_min": float, "arrival_at": iso8601,
-  "meals": float,
-  "food_value": float,
-  "fuel_cost": float, "personnel_cost": float, "transport_cost": float,
-  "need_multiplier": float,
-  "net_value": float,
-  "cost_per_meal": float,
-  "explanation": str
-}
-
-# rejection
-{"org_id": str, "dest_id": str, "reason_code": str, "reason": str}
+# hubspot (block-level outreach point, agency-facing only)
+{"dest_id": str, "name": str, "lat": float, "lon": float, "block_id": str,
+ "need_now": float, "need_trend": float, "capacity_lbs_per_visit": float}
 ```
+
+`weeks_of_month` exists because most Food Bank partner sites distribute on a
+monthly cadence ("1st and 3rd Thursday"). Flattening that to weekly would have
+the engine confidently propose runs to sites closed three weeks in four. `-1`
+means "last".
 
 ---
 
 ## 3. `needs.py` — need from the historical record
 
-**This is what makes it data-driven and forward-looking. Do not skip it.**
-
 ### 3.1 Block need
-
-1. Load `Downtown_BlockGrid.geojson` (382 polygons, EPSG:4326) and `BlockLevel_Counts_Panel261.csv`.
-   **Use Panel261, not the full file** — the full footprint grows by 121 blocks in 2022 and isn't comparable over time.
-2. Per block, series over the 12 count dates = `individuals + tents_structures + vehicles` (raw observed basis).
-3. `need_now(block)` = latest count date value.
-4. `need_trend(block)` = OLS slope over the last 5 dates, persons/year.
+1. `Downtown_BlockGrid.geojson` (382 polygons) + `BlockLevel_Counts_Panel261.csv`.
+   **Panel261 only** — the full file grows by 121 blocks in 2022 and isn't
+   comparable over time.
+2. Per block, `individuals + tents_structures + vehicles` (raw observed basis).
+3. `need_now` = latest count date. `need_trend` = OLS slope over the last 5
+   dates, persons/year.
 
 ### 3.2 Area forecast
+`DowntownCounts_Monthly.csv`, `area_type == "neighborhood"`, `component == "total"`.
+Linear trend + month-of-year dummies + a `fellowship_month` boolean, fitted with
+`numpy.linalg.lstsq`. Forecasts hold fellowship at 0.
 
-From `DowntownCounts_Monthly.csv`:
+The fellowship regressor earns its place: it absorbs **+48 people/month** in East
+Village. Without it that staffing change lands in the trend and the long decline
+reads far steeper than it is.
 
-- Filter `area_type == "neighborhood"`, `component == "total"`.
-- **Exclude `Outside Perimeter` before 2021-04** — null-not-zero; joining it mid-series fabricates a jump.
-- Fit linear trend + month-of-year seasonality, plus a boolean regressor for `fellowship_month` (extra volunteers inflate counts; drops from 10 months/yr in 2017 to zero after 2020, confounding any long trend).
-- Forecast 12 months per area. `forecast_delta(area)` = projected month 12 − latest actual.
+### 3.3 Two radii — different questions, different answers
+- **`SERVICE_RADIUS_M` = 300 m** — which blocks to *attribute* to a site for
+  scoring.
+- **`WALK_IN_RADIUS_M` = 800 m** — how far a person will actually *walk*
+  carrying food home. Fixed pantries only.
 
-### 3.3 Destination need
-
-```python
-SERVICE_RADIUS_M = 800          # ~½ mile / 10-min walk
-
-served = blocks within SERVICE_RADIUS_M of the destination
-need_now(dest)   = sum(need_now(b) for b in served)
-need_trend(dest) = sum(need_trend(b) for b in served) + forecast_delta(area of dest)
-```
-
-Destinations outside the block grid get `need_now = 0` and rank last — correct, they don't serve downtown.
+The original spec used 800 m for both. On this grid that is wrong for
+attribution: downtown blocks run ~90×60 m, so 800 m sweeps 120–190 of the 382
+cells, the score measures centrality rather than catchment, and **the ranking
+inverts** — Rachel's Women's Center places 1st at 800 m and 8th at 200 m. Both
+constants are live-tunable.
 
 ### 3.4 Data rules that must not be broken
-
-1. **Never sum `total` with `individual`/`tent`/`vehicle`.** `total` is already adjusted (`≈ individual + 1.75×tent + 2.03×vehicle`). Summing double-counts.
-2. **Use `Panel261`** for anything across time.
-3. **Join on `area`**, not raw labels — naive East Village joins undercount 60–75%.
+1. Never sum `total` with `individual`/`tent`/`vehicle` — `total` is already
+   adjusted (`≈ individual + 1.75×tent + 2.03×vehicle`).
+2. Use `Panel261` for anything across time.
+3. Join on `area`, not raw labels. The GeoJSON carries `neighborhood`; canonical
+   `area` comes from `Downtown_BlockGrid.csv`.
 4. `Outside Perimeter` is **null before April 2021**, not zero.
-5. **2025 is missing Jul, Aug, Oct, Nov.** Do not interpolate silently.
-6. Use **polygons, not centroids**, for point-in-block joins.
-7. Exclude **PRE2017** rows from component work — they carry `total` only.
+5. 2025 is missing Jul, Aug, Oct, Nov. Dropped, never interpolated.
+6. Polygons, not centroids, for point-in-block joins.
+7. Exclude `PRE2017` rows from component work.
 
 ---
 
-## 4. `economics.py` — the cost/benefit model
+## 4. `demand.py` + `agencies.py` — supply must not exceed absorption
 
-Every constant lives in one `CONFIG` dict so it's tunable live. **Each one needs a cited source before the demo** — a judge will ask where the numbers came from, and "we picked it" is a bad answer.
+**This is the part the original spec had no concept of, and it is load-bearing.**
 
-```python
-CONFIG = {
-  # --- routing ---
-  "AVG_SPEED_KMH": 25,
-  "ROAD_FACTOR": 1.35,            # haversine -> road distance
-  "LOAD_MIN": 15,
-  "UNLOAD_MIN": 10,
-  "INCLUDE_RETURN_LEG": True,     # crew returns to HQ
+Scored one donation at a time against a static world, the engine sent every
+donation to whichever site scored best: twenty downtown restaurants reporting
+80 lb each put **1,600 lb into one 350 lb site**, 4.6× capacity, and the surplus
+rots. `need_now` is a *stock* (people counted on one night); food demand is a
+*flow* (pounds per day).
 
-  # --- cost  [CITE: IRS standard mileage rate; SD nonprofit driver wage] ---
-  "COST_PER_KM": 0.43,            # fuel + wear
-  "WAGE_PER_HOUR": 22.00,         # loaded
+### 4.1 Apportionment
+Catchments overlap, so each block's count is split among the sites serving it.
+Apportioned total is **665** against **670** actually counted. Unapportioned it
+is 3,006 — a 4.5× overcount of the same people.
 
-  # --- benefit  [CITE: Feeding America lbs-per-meal; USDA meal cost] ---
-  "LBS_PER_MEAL": 1.2,
-  "VALUE_PER_MEAL": 3.50,
+### 4.2 The three demand rules — the asymmetry is the point
 
-  # --- need weighting ---
-  "ALPHA_NEED": 0.6,              # weight on current need
-  "BETA_TREND": 0.4,              # weight on rising need  <- the forward-looking term
+| | Intake cap | Why |
+|---|---|---|
+| **Fixed pantry** | **capped** by walk-in population | people come to it; food beyond that rots on a shelf |
+| **Mobile pantry** | **uncapped** by demand | it travels; reach is not bound to one address |
+| **Hubspot** | **always capped** | a single block only holds so many people |
 
-  # --- viability guards ---
-  "MAX_COST_PER_MEAL": 2.00,
-  "MIN_QUANTITY_LBS": 10.0,
+`daily_demand = people projected DEMAND_HORIZON_DAYS forward ×
+MEALS_PER_PERSON_PER_DAY × LBS_PER_MEAL`, capped by physical capacity. A block
+whose count is climbing earns a bigger budget *before* the people arrive — the
+forecast entering the supply side.
 
-  # --- safety ---
-  "MAX_TRANSIT_MIN": {"hot": 120, "refrigerated": 240, "frozen": 240, "ambient": 480},
-  "SAFETY_MARGIN_MIN": 30,
-}
-```
-
-### 4.1 Route — three legs, per (nonprofit, destination) pair
-
-```python
-leg_to_pickup  = haversine(org.hq, donor)        * ROAD_FACTOR
-leg_to_dropoff = haversine(donor, destination)   * ROAD_FACTOR
-leg_return     = haversine(destination, org.hq)  * ROAD_FACTOR if INCLUDE_RETURN_LEG else 0
-
-route_km   = leg_to_pickup + leg_to_dropoff + leg_return
-drive_min  = route_km / AVG_SPEED_KMH * 60
-total_min  = drive_min + LOAD_MIN + UNLOAD_MIN
-arrival_at = max(ready_at, now) + (leg_to_pickup+leg_to_dropoff)/AVG_SPEED_KMH*60 + LOAD_MIN
-```
-
-No routing API. Offline, deterministic, no key, no rate limit, nothing to fail on stage.
-
-### 4.2 Cost
-
-```python
-fuel_cost      = route_km * COST_PER_KM
-personnel_cost = (total_min / 60) * WAGE_PER_HOUR * org.staff_per_run
-transport_cost = fuel_cost + personnel_cost
-```
-
-### 4.3 Benefit
-
-```python
-meals      = quantity_lbs / LBS_PER_MEAL
-food_value = meals * VALUE_PER_MEAL
-
-need_multiplier = 1 + ALPHA_NEED * norm(dest.need_now) + BETA_TREND * norm(dest.need_trend)
-# norm() = min-max across all candidate destinations for this donation
-
-weighted_value = food_value * need_multiplier
-net_value      = weighted_value - transport_cost
-cost_per_meal  = transport_cost / meals
-```
-
-**`need_multiplier` is the merge.** Pure cost minimization sends food wherever is cheapest to reach — systematically the destinations nearest nonprofit HQs, regardless of who needs it. The multiplier makes the objective *cost-effectiveness* rather than cost, and `BETA_TREND` is where the forecast enters. Two destinations equidistant, one with 40 people and rising, one with 8 and falling: raw cost is indifferent, this is not.
-
-**Say this in the demo.** It is the analytical argument of the whole project.
+### 4.3 Ledger and limits
+`demand.LEDGER` records what each destination has been committed today.
+`schedule.LIMITS` lets an agency declare its own daily cap — staff off sick,
+fridge full, van in the shop. **A declared limit only ever tightens**; an agency
+saying "send me 900 lb" does not make its walk-in population able to eat 900 lb.
 
 ---
 
-## 5. `matching.py` — constraints and ranking
+## 5. `economics.py` — cost, freshness, tax
 
-For each donation, evaluate **every (nonprofit × destination) pair**. With ~8 orgs and ~20 destinations that's 160 combinations — brute force, no optimization needed.
+Every constant lives in `CONFIG`; every one has an entry in `CONFIG_SOURCES`
+with a source and a `verified` flag. `verify.py` lists the unverified ones.
 
-### 5.1 Hard constraints, in order. First failure rejects the pair.
+### 5.1 Freshness — why mobile pantries win restaurant food
+The engine does **not** hard-code a preference for mobile pantries. It models
+how long food waits before someone eats it:
 
-| # | Constraint | `reason_code` | Message |
-|---|---|---|---|
-| 1 | `quantity_lbs >= MIN_QUANTITY_LBS` | `QTY_TOO_SMALL` | "Below the 10 lb minimum for a dedicated run." |
-| 2 | `food_type in dest.accepts` | `TYPE_NOT_ACCEPTED` | "{Dest} does not accept {food_type}." |
-| 3 | Storage matches condition | `NO_STORAGE` | "{Dest} has no {condition} storage." |
-| 4 | Refrigerated/frozen needs `org.has_refrigerated_vehicle` | `NO_COLD_VEHICLE` | "{Org} has no refrigerated vehicle." |
-| 5 | `total_min <= MAX_TRANSIT_MIN[condition]` | `COLD_CHAIN` | "{n} min run exceeds the {limit} min safe window for {condition} food." |
-| 6 | `arrival_at + SAFETY_MARGIN_MIN <= expires_at` | `EXPIRES_IN_TRANSIT` | "Arrives {n} min before expiry — under the 30 min margin." |
-| 7 | `arrival_at` inside a `dest.open_window` | `DEST_CLOSED` | "{Dest} is closed at the {time} arrival. Next open: {next}." |
-| 8 | Run falls inside `org.operating_windows` | `ORG_CLOSED` | "{Org} is not operating at {time}." |
-| 9 | `quantity_lbs <= dest.capacity_lbs_per_visit` | `OVER_CAPACITY` | "Exceeds {Dest}'s {n} lb capacity for this window." |
-| 10 | `net_value > 0` | `NET_NEGATIVE` | "Run costs ${cost} to deliver ${value} of food — not viable." |
-| 11 | `cost_per_meal <= MAX_COST_PER_MEAL` | `INEFFICIENT` | "${x}/meal exceeds the ${limit} ceiling." |
+- **mobile** — next scheduled run + drive to nearest hubspot + handout ≈ **1.1 h**
+- **fixed** — next opening + `FIXED_PANTRY_DWELL_HOURS` (18 h) waiting for
+  walk-in traffic ≈ **18.4 h**
 
-**Constraints 10 and 11 are two independent guards.** Net value catches "not worth the trip." Cost-per-meal catches the run that's absurdly inefficient but scrapes positive because the donation is large. Both are needed.
+Value then decays with the share of shelf life consumed, floored at
+`FRESHNESS_FLOOR`. Consequences:
 
-**Always return every rejected pair with its reason.** Never drop silently. "160 combinations evaluated, 12 feasible, here's why the rest failed" is what makes the engine look intelligent rather than look like a distance sort.
+| Donation | Top 3 | Fixed pantries |
+|---|---|---|
+| prepared hot, 4 h | all mobile | rejected `SPOILS_BEFORE_REACHED` |
+| prepared cold, 12 h | all mobile | rejected |
+| produce, 2 days | all mobile | viable, 75% freshness |
+| packaged dry, 5 days | all mobile | viable, 90% freshness |
 
-### 5.2 Ranking
+Restaurant food goes to mobile pantries every time — **because prepared food
+genuinely cannot sit for 18 hours**, not by fiat. This survives the obvious
+question, "why not just always use mobile?" `MOBILE_PRIORITY_BONUS` exists for a
+blunter thumb on the scale and is deliberately left at **0.0**.
 
-Sort feasible matches by `net_value` descending. Show `cost_per_meal` alongside — nonprofits think in that metric and it lands with anyone who's run an operation.
-
-### 5.3 Explanation string
-
-```
-"Father Joe's Villages picks up from Nolita Hall — 3.1 km out, 1.4 km to drop.
- 42 min, $18.40 in fuel and staff time. 58 meals delivered at $0.32/meal.
- Destination serves 14 blocks with 47 people and need rising 12% over the last
- three counts. Chosen over Site X, which is 0.6 km closer but serves blocks
- with falling need."
-```
-
----
-
-## 6. `seed.py`
-
-1. **Nonprofits** — hand-curate 6–10 real San Diego orgs with HQ coordinates. Father Joe's Villages, San Diego Food Bank, Feeding San Diego, Salvation Army, St. Vincent de Paul. Geocode HQs via the **Census Geocoder** (`geocoding.geo.census.gov`) — free, no key, federal. Wage and vehicle cost from CONFIG unless you have better.
-2. **Destinations** — parse `sd_foodbank_sites.csv` (72 sites, already scraped: name, address, days, type, free-text hours). Then hand-add downtown meal services and day centers — **none of the 72 are in 92101**, so these are the ones that actually serve downtown. Neil Good Day Center, Father Joe's, God's Extended Hand, Ladle Fellowship. **Verify each is currently operating and get real hours.**
-3. **Hubspots** — top-N blocks by `need_now` from `needs.py`, block centroid as the delivery point, labeled by cross-streets from `Downtown_BlockGrid.csv`.
-4. **Donors** — downtown restaurants via `sb1383_donors.py`, bbox narrowed to the grid: **lon −117.171…−117.134, lat 32.695…32.724**.
-
-**Seed quality beats seed volume.** 15 correct downtown destinations with real hours demos better than 72 with guessed ones.
-
----
-
-## 7. API
+### 5.2 Cost
+Leg 1 is a round trip `pantry → restaurant → pantry`. Leg 2 is
+`pantry → hub → hub → pantry`, visit order exhaustive over ≤ `MAX_STOPS` so
+there is no TSP heuristic to defend. Straight line × `ROAD_FACTOR`; no routing
+API, nothing to fail on stage.
 
 ```
-GET  /api/nonprofits
-GET  /api/destinations          -> incl. need_now, need_trend
-GET  /api/blocks                -> GeoJSON + need per block
-GET  /api/forecast              -> monthly actual + 12-month projection
-POST /api/match                 -> {donation} -> {matches:[...], rejections:[...]}
-GET  /api/config
-POST /api/config                -> live weight/parameter tuning
+fuel      = route_km × cost_per_km
+personnel = total_min/60 × wage_per_hour × staff_per_run
+meals     = lbs / LBS_PER_MEAL
+value     = meals × VALUE_PER_MEAL × freshness × need_multiplier
+net_value = value − (fuel + personnel)
+```
+
+`need_multiplier = 1 + ALPHA_NEED·norm(need_now) + BETA_TREND·norm(need_trend)`.
+Min-max normalised across surviving candidates. **`BETA_TREND` is where the
+forecast enters the ranking.**
+
+### 5.3 Tax deduction
+`basis + 50% of (FMV − basis), capped at 2 × basis` — IRC §170(e)(3) enhanced
+deduction for donated food inventory. A 60 lb donation estimates **$135**.
+Labelled an estimate everywhere, with "confirm with your accountant".
+
+---
+
+## 6. `collection.py` — leg 1 constraints
+
+First failure rejects the pair. Ordered so the reason reported is the most
+useful one, not whichever fired first by accident.
+
+| `reason_code` | Meaning |
+|---|---|
+| `NOT_COLLECTING` | agency does not collect |
+| `QTY_TOO_SMALL` | below the minimum for a dedicated run |
+| `TYPE_NOT_ACCEPTED` | agency does not take this food type |
+| `NO_STORAGE` | no storage for this condition |
+| `NO_COLD_VEHICLE` | cold food, no refrigerated vehicle |
+| `NO_WALK_IN_DEMAND` | fixed pantry with no counted population near it |
+| `LIMIT_REACHED` | agency's own declared cap for today |
+| `INTAKE_SATURATED` | walk-in demand already met today |
+| `COLD_CHAIN` | round trip exceeds the safe window |
+| `EXPIRES_IN_TRANSIT` | back at the pantry too close to expiry |
+| `AGENCY_CLOSED` | not operating at pickup time |
+| `SPOILS_BEFORE_REACHED` | would only reach people after the food expires |
+| `NET_NEGATIVE` | run costs more than the food is worth |
+| `INEFFICIENT` | exceeds the cost-per-meal ceiling |
+
+`rules.summarise()` orders reasons by **what they explain, not how often they
+fired**. 416 county sites being seniors-only is the commonest reason and the
+least informative; "every pantry has met its demand" is what the donor needs.
+
+Leg 2 (`distribution.py`) allocates greedily on marginal value: each extra stop
+is added only when the food it carries outweighs the detour.
+
+---
+
+## 7. API — role-scoped
+
+```
+GET  /api/config          POST /api/config        live tuning
+GET  /api/blocks          GET  /api/forecast      map + forecast
+GET  /api/scenarios
+
+POST /api/restaurant/match      ?commit ?max_km   -> agencies + tax, NO hubspots
+GET  /api/restaurant/donors
+
+GET  /api/agency                                  roster
+GET  /api/agency/{id}           ?max_km           hubspots + pickups + limit
+POST /api/agency/{id}/limit                       declare a daily cap
+POST /api/agency/{id}/distribute ?commit          plan the mobile run
+DEL  /api/agency/pickup/{id}
+
+GET  /api/pantries        ?lat ?lon ?max_km       PUBLIC — pantries only
+
+POST /api/reset   GET /api/state   POST /api/demo/{key}
 ```
 
 ---
 
-## 8. UI — one page, three panes
+## 8. UI — one page, three roles
 
-**Left — donor form.** Address or map click, food type, quantity, condition, ready time, expiry. "Load example" button with the three scenarios.
+Role switcher top-right. Leaflet map left, panel right.
 
-**Center — Leaflet map.** Block polygons shaded by `need_now` (sequential ramp, legend, colour-blind safe). Donor pin. The winning three-leg route drawn HQ → pickup → dropoff. Feasible destinations green, rejected grey.
+- **Restaurant** — form or map click → ranked agencies, tax estimate, route to
+  the winner, grouped rejection reasons. No hubspots, no need shading.
+- **Agency** — pick agency, set daily limit, distance filter, scheduled pickups,
+  hubspots with demand-fill bars, "plan today's mobile run" drawing the route.
+  Block need shading on.
+- **Find food** — pantries near you, open now first, walking minutes, hours.
+  No hubspots, no need shading.
 
-**Right — results.** Ranked matches, each showing net value, cost per meal, and the cost breakdown (fuel vs. personnel). Below, collapsed "N rejected" with reasons grouped by code. Parameter sliders at the bottom if time allows.
-
-One screen. No routing, no tabs, no modals.
-
----
-
-## 9. Demo scenarios — seed and rehearse these
-
-1. **The good match.** 60 lb packaged dry goods, ambient, expires in 5 days, donor in Gaslamp. Routes to a downtown meal service — and the winning nonprofit is *not* the one with the nearest HQ, because the total three-leg route is shorter overall.
-2. **The rejection.** 12 lb hot prepared food, expires in 90 minutes, nearest accepting destination 40 min away and closed. Fires `COLD_CHAIN`, `DEST_CLOSED`, and `NET_NEGATIVE` at once. **This is the slide people remember.**
-3. **The thesis.** Two destinations nearly equidistant; the app picks the farther one because its blocks carry higher and rising need. Drag `BETA_TREND` to zero and watch the answer flip to the cheaper, lower-need site. That single interaction is the argument.
+A banner shows while agency data is simulated.
 
 ---
 
-## 10. Build order — freeze is noon Friday
+## 9. Honesty rules baked into the product
 
-**Tonight**
-- [ ] `needs.py`: block need + destination need scores printing to console
-- [ ] Baseline forecast (constant footprint, fellowship regressor)
-- [ ] `economics.py` + `matching.py`: all 11 constraints and the net-value model, tested from a plain script — **no UI yet**
-- [ ] `seed.py`: 6–10 nonprofits, 15–20 downtown destinations, real hours
-
-**Friday 09:00–12:00**
-- [ ] FastAPI wiring
-- [ ] Leaflet map, block shading, three-leg route drawing
-- [ ] Form → results incl. rejection list
-- [ ] Three scenarios end to end
-
-**Friday 12:00–14:00 — FREEZE**
-- [ ] Deck, ethics slide, limitations slide
-- [ ] Rehearse twice, out loud, timed
-
-**Cut order:** sliders → route drawing → block shading → forecast (fall back to trend only, **never to nothing** — forward-looking is required by the prompt) → extra scenarios.
+- **The pantry finder never claims a pantry is empty.** The ledger only knows
+  what BellyUp routed; a pantry may have food from the food bank we never saw.
+  It says "no BellyUp deliveries today — they may still have food from other
+  sources" rather than sending someone on a wasted walk.
+- **Every rejected pair returns a reason.** "680 pairs screened, 11 viable,
+  here is why the rest failed" is what makes the engine look intelligent rather
+  than like a distance sort.
+- **Simulated data announces itself** in the UI banner, `run_demo.py`,
+  `verify.py`, and a `simulated: true` field on every record.
 
 ---
 
-## 11. What to say on stage
+## 10. What to say on stage
 
-**The finding.** Downtown counts, constant footprint: 1,289 average in the 12 months to Jul 2023, 970 in the 12 after — **−24.8%**. The Unsafe Camping Ordinance took effect 31 Jul 2023; the break lands three to four months later. A falling street count is what housing people looks like *and* what moving people looks like. Present both; don't editorialise.
+**The finding.** Downtown counts, constant footprint: 1,289 average in the 12
+months to Jul 2023, 970 in the 12 after — **−24.8%**. The Unsafe Camping
+Ordinance took effect 31 Jul 2023; the break lands three to four months later. A
+falling street count is what housing people looks like *and* what moving people
+looks like. Present both; don't editorialise.
 
-**The waste.** The US discards 30–40% of its food supply *(USDA — have the citation ready)*. Meanwhile people two blocks from full kitchens go hungry.
+**The waste.** The US discards 30–40% of its food supply *(USDA)*. People two
+blocks from full kitchens go hungry.
 
-**The mandate.** SB 1383 *legally requires* large food businesses to donate surplus edible food. Tier One since Jan 2022 — supermarkets over $2M, grocery over 10,000 sq ft, distributors. Tier Two since Jan 2024 — **hotels with 200+ rooms and on-site food**, restaurants with 250+ seats or 5,000 sq ft, venues over 2,000/day. Downtown's Gaslamp and Convention Center district is dense with Tier Two generators blocks from the highest-need cells.
+**The incentive — and why the mandate argument is gone.** SB 1383 reaches Tier
+One (supermarkets) and Tier Two (250+ seats, 5,000 sq ft) generators only. Of the
+379 OSM food businesses in the downtown bbox, **~196 are the small independents
+this targets, and none are legally required to donate**. "The supply is mandated"
+is not our pitch. The enhanced deduction under IRC §170(e)(3) is the incentive,
+and the platform computes it.
 
-**The gap.** Supply is mandated. Demand is measured. The matching layer is missing — and matching is hard because transport cost is real and nonprofits are scattered. That's the product.
+**The bottleneck is absorption, not supply.** Twenty restaurants offering 80 lb
+each is 1,600 lb. Downtown's measured daily demand across sites open on a
+Wednesday afternoon is ~310 lb. The engine places what fits and **refuses the
+rest** — refusing is the correct answer.
 
 **Ethics — unprompted.**
-- Routes to organizations and block-level outreach points; never publishes where individuals sleep.
-- Hubspots are nonprofit-facing only. Donors see that a pickup was accepted, not where it goes.
-- Block aggregation was chosen deliberately so the output can't be operationalised for enforcement.
-- A 24.8% drop is roughly 300 people whose location changed. Say it in human terms once.
+- Routes to organisations and block-level outreach points; never publishes where
+  individuals sleep.
+- Hubspots are agency-facing only, enforced at the API layer.
+- Block aggregation was chosen so the output can't be operationalised for
+  enforcement.
+- A 24.8% drop is roughly 300 people whose location changed. Say it in human
+  terms once.
 
 **Limitations — volunteer them.**
-- Monthly visual street sweep: a known undercount measuring visibility as much as prevalence.
+- Monthly visual street sweep: a known undercount measuring visibility as much
+  as prevalence.
 - Straight-line × road factor, not routed. Fine for triage, not dispatch.
-- Cost constants are estimates — cite them, and say they're tunable per organization.
-- SB 1383 tiers are OSM approximations: no sales figures, floor areas, or seat counts.
-- The app proposes matches. It does not create the written agreement or food-safety compliance SB 1383 requires.
-
-**"Who uses this Monday?"** Name the organization and the decision it changes.
+- Cost constants are estimates, cited and tunable per organisation.
+- A mobile pantry collecting at 15:00 may not run until the next day. The engine
+  reports the deferral rather than pretending it is instant.
+- **Agency data is simulated** until the real roster lands.
+- The app proposes matches. It does not create the written agreement or
+  food-safety compliance the law requires.
 
 ---
 
-## 12. Definition of done
+## 11. Definition of done
 
-- [ ] Posting a donation returns ranked matches **and** rejections with reasons
-- [ ] Matching evaluates (nonprofit × destination) pairs, not destinations alone
-- [ ] Cost model includes all three legs and both fuel and personnel
-- [ ] Ranking demonstrably uses need + trend, not just cost — scenario 3 proves it
-- [ ] Need scores derive from `Panel261` + block grid with §3.4 respected
-- [ ] A forecast exists and is visible
-- [ ] All three scenarios run end to end with no code change
-- [ ] Every CONFIG constant has a cited source
-- [ ] Ethics and limitations slides written
+- [x] Three role-scoped views, hubspots served only to agencies
+- [x] Leg 1 ranks agencies by need-weighted value net of the agency's real cost
+- [x] Leg 2 allocates to hubspots against demand budgets and a ledger
+- [x] Fixed pantries capped by walk-in demand, mobile uncapped, hubspots capped
+- [x] Freshness model routes perishable restaurant food to mobile pantries
+- [x] Agencies can declare a daily intake limit; it only tightens
+- [x] Scheduled pickups visible to the collecting agency, filterable by distance
+- [x] Public pantry finder that never reveals a hubspot
+- [x] Tax deduction estimated and labelled
+- [x] Every rejection returns a reason, ordered by what it explains
+- [x] Need scores from `Panel261` + block grid with §3.4 respected
+- [x] A forecast exists and is visible
+- [ ] **Real agency roster** — replace `data/agencies.json` per `AGENCY_SCHEMA.md`
+- [ ] Verify Tier 1 items in `verify.py`
+- [ ] Deck, ethics slide, limitations slide, rehearse twice timed
+
+---
+
+## 12. What changed from the original spec, and why
+
+| Was | Now | Why |
+|---|---|---|
+| Nonprofits deliver to food-bank partner sites | Agencies with pantries, fixed or mobile | Food Bank contact: they are not the intermediary |
+| Donors = SB 1383 Tier One/Two generators | Small independent restaurants | That is who has unmoved surplus |
+| Mandate is the incentive | Tax deduction is the incentive | Small restaurants are exempt from SB 1383 |
+| One leg, donation × nonprofit × destination | Two legs, collection + distribution | The agency both collects and distributes |
+| `SERVICE_RADIUS_M` 800 m everywhere | 300 m attribution, 800 m walk-in | 800 m inverts the ranking on this grid |
+| Single donation, static world | Demand budgets + ledger + splitting | 20 donations all went to one 350 lb site |
+| No freshness concept | Time-to-people model | Restaurant food spoils; pantries hold it 18 h |
+| `sd_foodbank_sites.csv` = destinations | = candidate **agencies** | They are partner pantries, not food banks |
+
+`matching.py` is superseded by `collection.py` + `distribution.py` and is no
+longer imported. `nonprofits.json` is unused.

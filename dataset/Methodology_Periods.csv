@@ -1,0 +1,5 @@
+method,effective_from,effective_to,individual_multiplier,tent_multiplier,vehicle_multiplier,note
+PRE2017,2012-01-01,2017-04-26,1.0,2.0,2.0,"Preliminary Clean & Safe methodology: 2 persons per tent, 2 per vehicle. No tent/vehicle breakdown was published, so no adjustment can be reconstructed for these months."
+APR2017,2017-04-27,2018-05-30,1.0,1.75,1.66,Clean & Safe adopted the Regional Task Force on the Homeless (RTFH) methodology on 2017-04-27.
+MAY2018,2018-05-31,2019-12-31,1.0,1.75,2.03,RTFH raised the vehicle multiplier to 2.03; tent multiplier unchanged. Implemented by Clean & Safe on 2018-05-31.
+POST2020,2020-01-01,,1.0,1.75,2.03,"RTFH stopped applying tent/vehicle multipliers in January 2020; Clean & Safe continued. Multiplier values are UNCHANGED from MAY2018 - this period marks a divergence in practice, not a change in factors."
