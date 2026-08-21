@@ -22,6 +22,12 @@
     </div>
   </div>
   <div class="topstats" id="topstats"></div>
+  <div class="roleswitch" id="roleSwitch">
+    <button data-role="business">Business</button>
+    <button data-role="agency" class="on">Agency</button>
+    <button data-role="public">Find food</button>
+  </div>
+
   <div class="topactions">
     <button class="btn-ledger" id="ledgerBtn" title="Delivery ledger">
       &#128220; Ledger <span class="ledger-count" id="ledgerCount">0</span>
@@ -40,6 +46,22 @@
       <p class="feed-sub">Voluntary end-of-day reports from food businesses.
         Click one to compute its dispatch.</p>
     </div>
+    <!-- ===================== agency: pick who you are ================= -->
+    <div class="agencybar" id="agencyBar" hidden>
+      <label for="agencySel">You are</label>
+      <select id="agencySel"></select>
+      <div class="agencybar-sub" id="agencyStats"></div>
+    </div>
+
+    <!-- ===================== public: where are you ==================== -->
+    <div class="publicbar" id="publicBar" hidden>
+      <label for="pubAddr">Where are you?</label>
+      <input id="pubAddr" placeholder="e.g. 16th &amp; Market, San Diego">
+      <div class="reg-hint" id="pubGeo">Type an address and press Enter.</div>
+      <div class="publicbar-note">Pantry locations only &mdash; outreach
+        locations are never shown here.</div>
+    </div>
+
     <div class="feed-scroll">
     <button class="reg-open" id="regOpen">
       <span class="reg-plus">+</span> Report surplus &middot; new restaurant
@@ -109,9 +131,7 @@
 
     <div class="feed-list" id="feed"></div>
     </div>
-    <div class="feed-foot">
-      <span class="dot dot-quiet"></span> 17 more partners on the map reported no surplus tonight
-    </div>
+    <div class="feed-foot" id="feedFoot"></div>
   </aside>
 
   <!-- ======================= center: live map ========================== -->
