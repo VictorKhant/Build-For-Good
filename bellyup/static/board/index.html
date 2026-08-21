@@ -27,7 +27,7 @@
 
   <div class="topright">
     <div class="topstats" id="topstats"></div>
-    <button class="btn-ledger" id="forecastBtn" title="Overlay the blocks where Gi* + trend predict the cluster verdict will flip, on top of today's map" hidden>
+    <button class="btn-ledger" id="forecastBtn" title="Overlay statistically predicted hotspot changes" hidden>
       Show predicted changes
     </button>
     <button class="btn-ledger" id="ledgerBtn" title="Delivery ledger">
@@ -140,10 +140,10 @@
     <div id="map"></div>
 
     <div class="map-legend">
-      <div class="lg-row"><span class="lg-hotspot"></span> Only significant clusters shown (Gi*, p&lt;0.05) &middot; size = need</div>
-      <div class="lg-row"><span class="lg-hotspot lg-cluster lg-emerging"></span> Emerging cluster &middot; growing (predicted from trend)</div>
-      <div class="lg-row"><span class="lg-hotspot lg-cluster lg-cooling"></span> Cooling cluster &middot; declining from its peak</div>
-      <div class="lg-row"><span class="lg-hotspot lg-cluster lg-new"></span> "Show predicted changes": dashed orange = new cluster predicted; larger dashed blue ring = predicted to fade</div>
+      <div class="lg-row"><span class="lg-hotspot"></span> Significant hotspot cluster (Gi*, p&lt;0.05) &middot; size = need</div>
+      <div class="lg-row"><span class="lg-hotspot lg-cluster lg-emerging"></span> Emerging cluster &middot; growing</div>
+      <div class="lg-row"><span class="lg-hotspot lg-cluster lg-cooling"></span> Cooling cluster &middot; declining</div>
+      <div class="lg-row"><span class="lg-hotspot lg-cluster lg-new"></span> Dashed = predicted change</div>
       <div class="lg-row"><span class="lg-hotspot lg-served"></span> Hotspot served tonight (at limit)</div>
       <div class="lg-row"><span class="lg-supplier"></span> Supplier reporting surplus</div>
       <div class="lg-row"><span class="lg-supplier lg-quiet"></span> Supplier, quiet tonight</div>
@@ -162,14 +162,28 @@
 
   <!-- ======================= right: dispatch result ===================== -->
   <aside class="result" id="resultPanel">
-    <div class="result-empty" id="resultEmpty">
-      <div class="re-icon">&#9678;</div>
-      <p>Select a surplus report to compute the best
-        <strong>collector&nbsp;&rarr;&nbsp;hotspot</strong> dispatch &mdash;
-        an agency truck or a mobile pantry unit.</p>
-      <p class="re-model">reward(meals&nbsp;served, access&nbsp;gap) &minus; cost(miles, minutes)</p>
-    </div>
-    <div class="result-body" id="resultBody" hidden></div>
+    <section class="sim-panel" id="simPanel">
+      <div class="sim-title">Network intelligence</div>
+      <div class="sim-live"><span></span> Hybrid optimized network</div>
+      <div class="sim-status" id="simStatus">Loading the live operating network…</div>
+      <div class="sim-network-actions">
+        <button id="simRegenerate" class="sim-regenerate">Regenerate network</button>
+        <label class="sim-network-toggle" title="Show or hide Patrick's optimized road network">
+          <input id="simShowNetwork" type="checkbox" checked>
+          <span>Show Network</span>
+        </label>
+      </div>
+      <button id="simRestore" class="sim-restore" hidden>Restore all routes</button>
+    </section>
+    <section class="network-detail" id="networkDetail"></section>
+    <section class="offer-detail" id="offerDetail">
+      <div class="result-empty" id="resultEmpty">
+        <div class="re-icon">&#9678;</div>
+        <p>Select a surplus report to compute the best
+          <strong>collector&nbsp;&rarr;&nbsp;hotspot</strong> dispatch.</p>
+      </div>
+      <div class="result-body" id="resultBody" hidden></div>
+    </section>
   </aside>
 
 </main>
@@ -211,6 +225,6 @@
 </div>
 
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
-<script src="/static/board/app.js"></script>
+<script src="/static/board/app.js?v=20260821-network-layers"></script>
 </body>
 </html>

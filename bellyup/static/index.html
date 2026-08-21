@@ -1,0 +1,454 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>BellyUp — San Diego</title>
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<style>
+:root{
+  --bg:#0f1216; --panel:#171c22; --edge:#252c35; --ink:#e7ecf2; --dim:#95a3b3;
+  --accent:#5cc8a8; --warn:#e8b04b; --bad:#e2685f; --mobile:#5cc8a8; --fixed:#7aa7e8;
+}
+*{box-sizing:border-box}
+body{margin:0;font:14px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;
+     background:var(--bg);color:var(--ink);height:100vh;display:flex;flex-direction:column}
+header{display:flex;align-items:center;gap:16px;padding:10px 16px;background:var(--panel);
+       border-bottom:1px solid var(--edge);flex-wrap:wrap}
+h1{font-size:16px;margin:0;letter-spacing:.5px}
+h1 span{color:var(--accent)}
+.roles{display:flex;gap:4px;margin-left:auto}
+.roles button{background:transparent;border:1px solid var(--edge);color:var(--dim);
+  padding:6px 14px;border-radius:6px;cursor:pointer;font-size:13px}
+.roles button.on{background:var(--accent);border-color:var(--accent);color:#0f1216;font-weight:600}
+#sim{background:#3a2a12;color:var(--warn);padding:5px 16px;font-size:12px;
+     border-bottom:1px solid var(--edge)}
+main{flex:1;display:flex;min-height:0}
+#map{flex:1;background:#0b0e11}
+aside{width:400px;background:var(--panel);border-left:1px solid var(--edge);
+      overflow-y:auto;padding:14px}
+.blurb{color:var(--dim);font-size:12.5px;margin-bottom:14px;line-height:1.5}
+label{display:block;font-size:11px;text-transform:uppercase;letter-spacing:.6px;
+      color:var(--dim);margin:10px 0 4px}
+input,select{width:100%;background:#0f1318;border:1px solid var(--edge);color:var(--ink);
+             padding:8px;border-radius:5px;font-size:13px}
+.row{display:flex;gap:8px}.row>*{flex:1}
+button.go{width:100%;margin-top:14px;background:var(--accent);color:#0f1216;border:0;
+          padding:10px;border-radius:6px;font-weight:600;cursor:pointer;font-size:14px}
+button.go:hover{filter:brightness(1.1)}
+.card{background:#0f1318;border:1px solid var(--edge);border-radius:7px;padding:10px;margin:8px 0}
+.card.top{border-color:var(--accent)}
+.card h4{margin:0 0 5px;font-size:13.5px;display:flex;justify-content:space-between;gap:8px}
+.tag{font-size:10px;padding:2px 7px;border-radius:99px;font-weight:600;white-space:nowrap}
+.tag.mobile{background:rgba(92,200,168,.18);color:var(--mobile)}
+.tag.fixed{background:rgba(122,167,232,.18);color:var(--fixed)}
+.tag.food{background:rgba(92,200,168,.18);color:var(--mobile)}
+.tag.shut{background:rgba(226,104,95,.15);color:var(--bad)}
+.meta{color:var(--dim);font-size:12px}
+.nums{display:flex;gap:12px;margin-top:6px;font-size:12px;flex-wrap:wrap}
+.nums b{color:var(--ink);font-weight:600}
+.why{color:var(--dim);font-size:11.5px;margin-top:7px;border-top:1px solid var(--edge);padding-top:6px}
+.tax{background:rgba(232,176,75,.1);border:1px solid rgba(232,176,75,.3);
+     border-radius:7px;padding:9px;margin:10px 0}
+.tax b{color:var(--warn);font-size:16px}
+.rej{margin-top:12px;font-size:11.5px;color:var(--dim)}
+.rej div{padding:2px 0}
+.rej code{color:var(--bad);font-size:11px}
+.bar{height:5px;background:#232a33;border-radius:99px;overflow:hidden;margin-top:5px}
+.bar i{display:block;height:100%;background:var(--accent)}
+.empty{color:var(--dim);text-align:center;padding:26px 10px;font-size:13px}
+.note{background:rgba(122,167,232,.08);border-left:2px solid var(--fixed);
+      padding:7px 10px;font-size:11.5px;color:var(--dim);margin:10px 0}
+.leaflet-popup-content-wrapper,.leaflet-popup-tip{background:#171c22;color:var(--ink);
+  box-shadow:0 2px 14px rgba(0,0,0,.5)}
+.leaflet-popup-content{font-size:12.5px}
+.leaflet-popup-content-wrapper{border:1px solid var(--edge)}
+.leaflet-container{background:#0b0e11}
+.needlegend{background:rgba(23,28,34,.94);border:1px solid var(--edge);border-radius:6px;
+  padding:8px 10px;font-size:11px;color:var(--dim);line-height:1.7}
+.needlegend b{display:block;color:var(--ink);font-size:10px;text-transform:uppercase;
+  letter-spacing:.5px;margin-bottom:5px;font-weight:600}
+.needlegend i{display:inline-block;width:22px;height:9px;margin-right:6px;
+  border-radius:2px;vertical-align:middle}
+.leaflet-control-zoom a{background:var(--panel);color:var(--ink);
+  border:1px solid var(--edge);border-bottom:0}
+.leaflet-control-zoom a:hover{background:#1e252d;color:var(--accent)}
+.leaflet-control-zoom a:last-child{border-bottom:1px solid var(--edge)}
+.leaflet-control-attribution{background:rgba(15,18,22,.8)!important;color:var(--dim)!important;
+  font-size:10px}
+.leaflet-control-attribution a{color:var(--fixed)!important}
+.leaflet-tooltip{background:#171c22;border:1px solid var(--edge);color:var(--ink);
+  box-shadow:none;font-size:12px}
+.leaflet-tooltip-top:before{border-top-color:var(--edge)}
+.leaflet-tooltip-left:before{border-left-color:var(--edge)}
+.leaflet-tooltip-right:before{border-right-color:var(--edge)}
+.leaflet-tooltip-bottom:before{border-bottom-color:var(--edge)}
+</style>
+</head>
+<body>
+<header>
+  <h1>Belly<span>Up</span></h1>
+  <span class="meta" id="clock"></span>
+  <div class="roles">
+    <button data-role="restaurant" class="on">Restaurant</button>
+    <button data-role="agency">Agency</button>
+    <button data-role="public">Find food</button>
+  </div>
+</header>
+<div id="sim" hidden></div>
+<main>
+  <div id="map"></div>
+  <aside id="panel"></aside>
+</main>
+<script>
+const API=(p,o)=>fetch(p,o).then(r=>r.json());
+let map, layers={}, role='restaurant', donorPin=null, agencies=[], blocksLoaded=false;
+const LOC={restaurant:null, public:null};   // {lat,lon} resolved per view
+
+async function resolveAddress(inputId, statusId, key){
+  const el=document.getElementById(inputId), st=document.getElementById(statusId);
+  const q=(el.value||'').trim();
+  // A failed lookup must CLEAR the stored location. Otherwise a user retypes
+  // an address, it fails, they submit anyway, and the request silently goes out
+  // with the previous address still attached.
+  if(!q){LOC[key]=null;st.textContent='Enter an address.';return null;}
+  st.textContent='Looking up address…';
+  try{
+    const res=await fetch('/api/geocode?address='+encodeURIComponent(q));
+    if(!res.ok){const e=await res.json();LOC[key]=null;
+      st.innerHTML='<span style="color:var(--bad)">'+(e.detail||'Not found')+'</span>';return null;}
+    const d=await res.json();
+    LOC[key]={lat:d.lat,lon:d.lon};
+    st.innerHTML='&#128205; '+d.matched+' <span style="opacity:.6">('+d.source+')</span>';
+    return LOC[key];
+  }catch(err){LOC[key]=null;
+    st.innerHTML='<span style="color:var(--bad)">Lookup failed</span>';return null;}
+}
+
+function initMap(){
+  map=L.map('map',{zoomControl:true}).setView([32.7125,-117.1570],14);
+  // CARTO Dark Matter, split into base and labels. Free, no API key.
+  //
+  // The single dark_all layer put street names UNDERNEATH the need polygons,
+  // so the moment the agency view shaded the grid the map became unreadable.
+  // Drawing labels in a pane above the shading fixes that, and it is why the
+  // base is the nolabels variant rather than dark_all.
+  const CARTO='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> '+
+              'contributors &copy; <a href="https://carto.com/attributions">CARTO</a>';
+  L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_nolabels/{z}/{x}/{y}{r}.png',
+    {attribution:CARTO, subdomains:'abcd', maxZoom:20}).addTo(map);
+
+  map.createPane('shade');  map.getPane('shade').style.zIndex=350;
+  map.createPane('labels'); map.getPane('labels').style.zIndex=450;
+  map.getPane('labels').style.pointerEvents='none';
+
+  L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_only_labels/{z}/{x}/{y}{r}.png',
+    {subdomains:'abcd', maxZoom:20, pane:'labels'}).addTo(map);
+
+  ['blocks','pins','routes'].forEach(k=>layers[k]=L.layerGroup().addTo(map));
+  // Location comes from the address field only. A map pin gives coordinates
+  // nobody can check against a real place, and the address is what an agency
+  // driver actually needs to turn up at.
+}
+const clear=k=>layers[k].clearLayers();
+// White-ish ring rather than near-black: on dark tiles a dark outline merges
+// into the basemap and the markers lose their edge.
+const dot=(lat,lon,color,r=7)=>L.circleMarker([lat,lon],
+  {radius:r,color:'#e7ecf2',weight:1.5,opacity:.95,fillColor:color,fillOpacity:1,
+   pane:'markerPane'});
+
+// ---------- need shading: agency view only ----------
+// Sequential heat ramp, ordered by luminance so it still reads as a ramp in
+// greyscale and for red-green colour blindness.
+//
+// Opacity climbs with the value as well as hue. Most of the 261 panel blocks
+// hold only one to three people, so a flat opacity turns the whole grid into a
+// wash and the eye has nothing to land on. Fading the low end lets the blocks
+// that actually carry need come forward.
+const NEED_BANDS=[
+  {min:40, color:'#ff5f52', fill:.55, label:'40+'},
+  {min:20, color:'#ff8f3f', fill:.44, label:'20-39'},
+  {min:10, color:'#ffc247', fill:.33, label:'10-19'},
+  {min:4,  color:'#e3dd72', fill:.22, label:'4-9'},
+  {min:1,  color:'#8fae7d', fill:.13, label:'1-3'},
+];
+function needStyle(n){ if(n<=0)return null;
+  return NEED_BANDS.find(b=>n>=b.min)||null; }
+async function loadBlocks(){
+  const gj=await API('/api/blocks');
+  clear('blocks');
+  gj.features.forEach(f=>{
+    const b=needStyle(f.properties.need_now); if(!b)return;
+    L.polygon(f.geometry.coordinates[0].map(p=>[p[1],p[0]]),
+      {pane:'shade',color:b.color,weight:1,opacity:Math.min(.9,b.fill+.3),
+       fillColor:b.color,fillOpacity:b.fill})
+     .bindPopup(`<b>${f.properties.label}</b><br>${f.properties.area}<br>
+       ${f.properties.need_now} counted · trend ${f.properties.need_trend>0?'+':''}${f.properties.need_trend}/yr`)
+     .addTo(layers.blocks);
+  });
+  blocksLoaded=true;
+  addLegend();
+}
+
+let legend=null;
+function addLegend(){
+  if(legend) return;
+  legend=L.control({position:'bottomleft'});
+  legend.onAdd=()=>{
+    const d=L.DomUtil.create('div','needlegend');
+    d.innerHTML='<b>People counted per block</b>'+NEED_BANDS.slice().reverse().map(b=>
+      `<i style="background:${b.color};opacity:${b.fill+.25}"></i>${b.label}`).join('');
+    return d;
+  };
+  legend.addTo(map);
+}
+function dropLegend(){ if(legend){map.removeControl(legend);legend=null;} }
+
+// =================== RESTAURANT ===================
+function restaurantForm(){
+  document.getElementById('panel').innerHTML=`
+  <div class="blurb">Post today's surplus. An agency collects it — you pay nothing,
+   carry no transport liability, and claim the deduction.</div>
+  <label>Restaurant name</label><input id="dn" value="My Restaurant">
+  <label>Address</label>
+  <input id="daddr" placeholder="e.g. 2305 India St, San Diego"
+         value="655 Fourth Ave, San Diego, CA 92101">
+  <div class="meta" id="dloc" style="margin-top:5px">Type your address and press Enter.</div>
+  <label>Food type</label><select id="dtype">
+    <option value="prepared_hot">Prepared — hot</option>
+    <option value="prepared_cold">Prepared — cold</option>
+    <option value="produce" selected>Produce</option>
+    <option value="bakery">Bakery</option>
+    <option value="dairy">Dairy</option>
+    <option value="packaged_dry">Packaged dry goods</option></select>
+  <div class="row">
+   <div><label>Condition</label><select id="dcond">
+     <option value="ambient" selected>Ambient</option><option value="hot">Hot</option>
+     <option value="refrigerated">Refrigerated</option><option value="frozen">Frozen</option></select></div>
+   <div><label>Pounds</label><input id="dqty" type="number" value="40"></div></div>
+  <div class="row">
+   <div><label>Ready in (min)</label><input id="dready" type="number" value="15"></div>
+   <div><label>Good for (hours)</label><input id="dexp" type="number" value="24"></div></div>
+  <label>Max distance (km, blank = any)</label><input id="dmax" type="number" placeholder="any">
+  <button class="go" onclick="postDonation()">Find an agency</button>
+  <div id="out"></div>`;
+  const a=document.getElementById('daddr');
+  a.addEventListener('change',async()=>{const l=await resolveAddress('daddr','dloc','restaurant');
+    if(l){pinDonor(l.lat,l.lon);map.setView([l.lat,l.lon],15);}});
+  a.addEventListener('keydown',e=>{if(e.key==='Enter')a.dispatchEvent(new Event('change'));});
+  resolveAddress('daddr','dloc','restaurant').then(l=>{if(l)pinDonor(l.lat,l.lon);});
+}
+function pinDonor(lat,lon){
+  clear('pins');
+  donorPin=dot(lat,lon,'#e8b04b',9).bindTooltip('Your restaurant').addTo(layers.pins);
+}
+async function postDonation(){
+  const v=id=>document.getElementById(id).value;
+  let loc=LOC.restaurant;
+  if(!loc) loc=await resolveAddress('daddr','dloc','restaurant');
+  if(!loc){document.getElementById('out').innerHTML=
+    '<div class="empty">Enter an address first.</div>';return;}
+  const body={donor_name:v('dn'),lat:loc.lat,lon:loc.lon,address:v('daddr'),
+    food_type:v('dtype'),condition:v('dcond'),quantity_lbs:+v('dqty'),
+    ready_in_min:+v('dready'),expires_in_hours:+v('dexp')};
+  const mx=v('dmax');
+  const r=await API('/api/restaurant/match'+(mx?`?max_km=${mx}`:''),
+    {method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(body)});
+  renderDonation(r,body);
+}
+function renderDonation(r,body){
+  clear('routes');
+  const t=r.tax;
+  let h=`<div class="tax">Estimated deduction <b>$${t.deduction_estimate.toFixed(2)}</b>
+    <div class="meta" style="margin-top:3px">${t.rule}. Estimate only — confirm with your accountant.</div></div>`;
+  h+=`<div class="meta">${r.evaluated} agencies screened · <b>${r.feasible}</b> can collect</div>`;
+  if(!r.matches.length){
+    h+=`<div class="empty">${r.headline||'No agency can collect this.'}</div>`;
+  }
+  r.matches.slice(0,6).forEach((m,i)=>{
+    h+=`<div class="card${i?'':' top'}">
+      <h4>${m.agency_name}<span class="tag ${m.kind}">${m.kind==='mobile'?'MOBILE':'WALK-IN'}</span></h4>
+      <div class="meta">${m.collection_type}</div>
+      <div class="nums"><span>takes <b>${m.accepts_lbs} lb</b></span>
+        <span><b>${m.one_way_km} km</b> away</span>
+        <span>pickup <b>${m.pickup_at.slice(11)}</b></span></div>
+      <div class="nums"><span>reaches people in <b>${m.hours_to_people}h</b></span>
+        <span>freshness <b>${Math.round(m.freshness*100)}%</b></span>
+        <span><b>${m.meals}</b> meals</span></div>
+      <div class="why">Costs the agency $${m.transport_cost.toFixed(2)} — $${m.cost_per_meal.toFixed(2)}/meal. You pay nothing.</div>
+    </div>`;
+    const c=m.kind==='mobile'?'#5cc8a8':'#7aa7e8';
+    dot(m.lat,m.lon,c,i?6:9).bindTooltip(m.agency_name).addTo(layers.routes);
+    if(i===0&&donorPin) L.polyline([[body.lat,body.lon],[m.lat,m.lon]],
+      {color:c,weight:3,dashArray:'6,5'}).addTo(layers.routes);
+  });
+  if(r.rejection_summary.length){
+    h+=`<div class="rej"><b>Why the others couldn't</b>`;
+    r.rejection_summary.slice(0,5).forEach(g=>
+      h+=`<div><code>${g.reason_code}</code> ×${g.count} — ${g.example}</div>`);
+    h+=`</div>`;
+  }
+  document.getElementById('out').innerHTML=h;
+}
+
+// =================== AGENCY ===================
+async function agencyView(){
+  const d=await API('/api/agency'); agencies=d.agencies;
+  const mob=agencies.filter(a=>a.has_mobile_pantry);
+  document.getElementById('panel').innerHTML=`
+    <div class="blurb">Your collections and the hubspots you serve. Set a daily
+     intake limit and the matcher will stop sending you more than you asked for.</div>
+    <label>Agency</label><select id="asel">${agencies.map(a=>
+      `<option value="${a.agency_id}">${a.name} ${a.has_mobile_pantry?'(mobile)':''}</option>`).join('')}</select>
+    <div class="row"><div><label>Daily limit (lb)</label><input id="alim" type="number" placeholder="no limit"></div>
+      <div><label>Within (km)</label><input id="amax" type="number" value="10"></div></div>
+    <button class="go" onclick="loadAgency()">Refresh</button>
+    <div id="aout"></div>`;
+  document.getElementById('asel').value=(mob[0]||agencies[0]).agency_id;
+  document.getElementById('asel').onchange=loadAgency;
+  if(!blocksLoaded) await loadBlocks();
+  loadAgency();
+}
+async function loadAgency(){
+  const id=document.getElementById('asel').value;
+  const mx=document.getElementById('amax').value;
+  const lim=document.getElementById('alim').value;
+  if(lim!=='') await API(`/api/agency/${id}/limit`,{method:'POST',
+    headers:{'content-type':'application/json'},body:JSON.stringify({limit_lbs:+lim})});
+  const r=await API(`/api/agency/${id}`+(mx?`?max_km=${mx}`:''));
+  clear('pins');clear('routes');
+  const a=r.agency;
+  dot(a.lat,a.lon,'#e8b04b',10).bindTooltip(a.name+' (base)').addTo(layers.pins);
+
+  let h=`<div class="card top"><h4>${a.name}
+     <span class="tag ${a.has_mobile_pantry?'mobile':'fixed'}">${a.has_mobile_pantry?'MOBILE':'WALK-IN'}</span></h4>
+    <div class="nums"><span>intake budget <b>${a.intake.demand_lbs.toFixed(0)} lb/day</b></span>
+      <span>scheduled <b>${r.scheduled_lbs} lb</b></span>
+      ${r.limit_lbs!=null?`<span>your limit <b>${r.limit_lbs} lb</b></span>`:''}</div>
+    <div class="meta" style="margin-top:4px">capped by ${a.intake.capped_by}</div></div>`;
+
+  h+=`<label>Scheduled pickups (${r.pickups.length})</label>`;
+  if(!r.pickups.length) h+=`<div class="empty">Nothing scheduled yet. Restaurants matched to you appear here.</div>`;
+  r.pickups.forEach(p=>{
+    h+=`<div class="card"><h4>${p.donor_name}<span class="meta">${p.pickup_at.slice(11)}</span></h4>
+      <div class="nums"><span><b>${p.quantity_lbs} lb</b> ${p.food_type.replace('_',' ')}</span>
+        <span><b>${p.distance_km} km</b></span><span>$${p.cost.toFixed(2)} cost</span></div></div>`;
+    dot(p.donor_lat,p.donor_lon,'#e8b04b',6).bindTooltip(p.donor_name).addTo(layers.pins);
+    L.polyline([[a.lat,a.lon],[p.donor_lat,p.donor_lon]],
+      {color:'#e8b04b',weight:2,opacity:.75,dashArray:'4,4'}).addTo(layers.routes);
+  });
+
+  if(!a.has_mobile_pantry){
+    h+=`<div class="note">${r.hubspots_note}</div>`;
+  }else{
+    h+=`<label>Hubspots you serve (${r.hubspots.length})</label>`;
+    r.hubspots.forEach(x=>{
+      const pct=x.daily_demand_lbs?Math.min(100,x.committed_today_lbs/x.daily_demand_lbs*100):0;
+      h+=`<div class="card"><h4>${x.name.replace('Outreach hubspot — ','')}
+          <span class="meta">${x.distance_km} km</span></h4>
+        <div class="nums"><span><b>${Math.round(x.need_now)}</b> counted</span>
+          <span>trend <b>${x.need_trend>0?'+':''}${x.need_trend.toFixed(1)}</b>/yr</span>
+          <span><b>${x.remaining_lbs.toFixed(0)}</b> lb still needed</span></div>
+        <div class="bar"><i style="width:${pct}%"></i></div>
+        <div class="meta" style="margin-top:3px">${x.committed_today_lbs.toFixed(0)} of ${x.daily_demand_lbs.toFixed(0)} lb delivered today</div></div>`;
+      dot(x.lat,x.lon,'#e2685f',8).bindTooltip(x.name).addTo(layers.pins);
+    });
+    h+=`<button class="go" onclick="planRun('${a.agency_id}')">Plan today's mobile run</button>`;
+  }
+  h+=`<div id="run"></div>`;
+  document.getElementById('aout').innerHTML=h;
+}
+async function planRun(id){
+  const r=await API(`/api/agency/${id}/distribute`,{method:'POST'});
+  clear('routes');
+  if(!r.feasible){document.getElementById('run').innerHTML=
+    `<div class="empty">${r.reason}</div>`;return;}
+  let h=`<div class="card top"><h4>Mobile run — ${r.n_stops} stop${r.n_stops>1?'s':''}
+      <span class="meta">${r.route_km.total} km</span></h4>
+    <div class="nums"><span><b>${r.delivered_lbs} lb</b> out</span>
+      <span><b>${r.meals}</b> meals</span><span>$${r.cost_per_meal.toFixed(2)}/meal</span>
+      <span>departs <b>${r.departs_at.slice(11)}</b></span></div>`;
+  r.stops.forEach((s,i)=>h+=`<div class="meta" style="margin-top:5px">
+     ${i+1}. <b style="color:var(--ink)">${s.lbs} lb</b> → ${s.name.replace('Outreach hubspot — ','')}
+     (${s.arrival_at.slice(11)})</div>`);
+  h+=`<div class="why">${r.explanation}</div></div>`;
+  document.getElementById('run').innerHTML=h;
+  const pts=[[r.lat,r.lon],...r.stops.map(s=>[s.lat,s.lon]),[r.lat,r.lon]];
+  L.polyline(pts,{color:'#5cc8a8',weight:4}).addTo(layers.routes);
+  map.fitBounds(L.latLngBounds(pts).pad(.25));
+}
+
+// =================== PUBLIC ===================
+function publicView(){
+  document.getElementById('panel').innerHTML=`
+   <div class="blurb">Pantries near you — open now first.</div>
+   <label>Where are you?</label>
+   <input id="maddr" placeholder="e.g. 16th & Market, San Diego"
+          value="1401 Imperial Ave, San Diego, CA 92101">
+   <div class="meta" id="mloc" style="margin-top:5px">Type where you are and press Enter.</div>
+   <div class="row"><div><label>Within (km)</label><input id="mmax" type="number" value="4"></div>
+     <div><label>Show</label><select id="mfood">
+       <option value="">All pantries</option><option value="1">Only with a delivery today</option></select></div></div>
+   <button class="go" onclick="loadPantries()">Search</button>
+   <div class="note">Pantry locations only — outreach locations are never shown here.
+    We can only see food routed through BellyUp; a pantry may have more from other sources.</div>
+   <div id="pout"></div>`;
+  clear('blocks'); blocksLoaded=false; dropLegend();
+  const a=document.getElementById('maddr');
+  a.addEventListener('change',async()=>{const l=await resolveAddress('maddr','mloc','public');
+    if(l){pinMe(l.lat,l.lon);map.setView([l.lat,l.lon],15);loadPantries();}});
+  a.addEventListener('keydown',e=>{if(e.key==='Enter')a.dispatchEvent(new Event('change'));});
+  resolveAddress('maddr','mloc','public').then(l=>{if(l){pinMe(l.lat,l.lon);loadPantries();}});
+}
+function pinMe(lat,lon){
+  clear('pins'); dot(lat,lon,'#e8b04b',9).bindTooltip('You').addTo(layers.pins);
+}
+async function loadPantries(){
+  let loc=LOC.public;
+  if(!loc) loc=await resolveAddress('maddr','mloc','public');
+  if(!loc){document.getElementById('pout').innerHTML=
+    '<div class="empty">Set a location first.</div>';return;}
+  const v=id=>document.getElementById(id).value;
+  const q=new URLSearchParams({lat:loc.lat,lon:loc.lon,max_km:v('mmax')});
+  if(v('mfood')) q.set('only_with_food','true');
+  const r=await API('/api/pantries?'+q);
+  clear('routes');
+  let h=`<div class="meta">${r.count} pantries · ${r.open_now} open now · ${r.delivered_today} had a BellyUp delivery today</div>`;
+  if(!r.pantries.length) h+=`<div class="empty">Nothing within that distance.</div>`;
+  r.pantries.forEach(p=>{
+    h+=`<div class="card${p.delivered_today&&p.open_now?' top':''}">
+      <h4>${p.name}${p.delivered_today?'<span class="tag food">FOOD IN TODAY</span>':
+        (p.open_now?'':'<span class="tag shut">CLOSED</span>')}</h4>
+      <div class="meta">${p.address}</div>
+      <div class="nums"><span><b>${p.distance_km} km</b></span>
+        <span>${p.walk_minutes} min walk</span>
+        <span>${p.open_now?'open now':'opens '+p.next_open}</span></div>
+      <div class="why">${p.hours}<br>${p.stock_note}${p.walk_in?'':' · mobile base — food is taken out, not laid out'}</div>
+    </div>`;
+    dot(p.lat,p.lon,p.delivered_today?'#5cc8a8':(p.open_now?'#7aa7e8':'#5a6675'),p.delivered_today?8:6)
+      .bindTooltip(p.name).addTo(layers.routes);
+  });
+  document.getElementById('pout').innerHTML=h;
+}
+
+// =================== boot ===================
+document.querySelectorAll('.roles button').forEach(b=>b.onclick=()=>{
+  document.querySelectorAll('.roles button').forEach(x=>x.classList.toggle('on',x===b));
+  role=b.dataset.role; ['pins','routes','blocks'].forEach(clear);
+  if(role!=='agency'){blocksLoaded=false;dropLegend();}
+  ({restaurant:restaurantForm,agency:agencyView,public:publicView})[role]();
+});
+(async()=>{
+  initMap();
+  const st=await API('/api/state');
+  document.getElementById('clock').textContent=
+    new Date(st.clock).toLocaleString('en-US',{weekday:'short',hour:'2-digit',minute:'2-digit'});
+  const ag=await API('/api/agency');
+  if(ag.simulated){const s=document.getElementById('sim');s.hidden=false;
+    s.textContent='⚠ Simulated agency data — every agency shown is invented. Replace data/agencies.json before presenting.';}
+  restaurantForm();
+})();
+</script>
+</body>
+</html>

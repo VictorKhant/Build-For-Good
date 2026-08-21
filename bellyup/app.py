@@ -1,17 +1,19 @@
-"""FastAPI surface for the BellyUp dispatch board.
+"""FastAPI surface. Three roles, three different views of the same engine.
 
-    /api/board/*   restaurants report surplus, agencies get matched offers,
-                   the public finds pantries -- one merged evening board.
+    /api/restaurant/*   post surplus, get matched, see the tax estimate
+    /api/agency/*       hubspots, scheduled pickups, intake limit, distribution
+    /api/pantries       public: where a person can get food
 
-Hubspots are agency-facing only. They are block-level locations where
-unsheltered people gather, and publishing them would hand anyone --
-including someone looking to move people on -- a map of where to find them.
-The business and public views never see them.
+The role split is not cosmetic. Hubspots are served ONLY under /api/agency.
+They are block-level locations where unsheltered people gather, and publishing
+them would hand anyone -- including someone looking to move people on -- a map
+of where to find them. The public and restaurant views never see them.
 """
 
 from __future__ import annotations
 
-import math
+import json
+import sys
 from datetime import datetime, timedelta
 from pathlib import Path
 
@@ -20,24 +22,54 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
+import agencies as ag_mod
 import claims as claims_mod
+import collection
+import demand as demand_mod
 import demo_data
 import dispatch
+import distribution
 import geocode as geo
+import needs as needs_mod
+import pantry_finder
+import pipeline
 import registry
+import scenarios
+import schedule as sched
+from economics import CONFIG, CONFIG_SOURCES, tax_deduction
 
 HERE = Path(__file__).resolve().parent
 DATA = HERE / "data"
+PROJECT_ROOT = HERE.parent
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
+from api.main import optimize as run_optimization
+from api.main import results as optimization_results
+from api.main import simulation_routes as optimization_routes
+from calc.sync_live_suppliers import sync_live_suppliers
+from calc.road_routing import road_route
+from calc.database import read_table
+from optim.dynamic_insertion import evaluate as evaluate_insertions
+from optim.dynamic_insertion import apply as apply_insertion
 
 app = FastAPI(title="BellyUp", version="2.0")
 
+_state: dict = {}
 
-def haversine_km(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
-    r = 6371.0
-    p1, p2 = math.radians(lat1), math.radians(lat2)
-    dp, dl = math.radians(lat2 - lat1), math.radians(lon2 - lon1)
-    a = math.sin(dp / 2) ** 2 + math.cos(p1) * math.cos(p2) * math.sin(dl / 2) ** 2
-    return 2 * r * math.asin(math.sqrt(a))
+
+def boot():
+    if not _state:
+        _state["agencies"] = ag_mod.load(CONFIG)
+        dests = json.loads((DATA / "destinations.json").read_text())
+        _state["hubspots"] = [d for d in dests if d["dest_type"] == "hubspot"]
+        _state["donors"] = json.loads((DATA / "donors.json").read_text())["donors"]
+        _state["idx"] = needs_mod.get_index()
+    return _state
+
+
+def now() -> datetime:
+    """Clock for the role-scoped views and their rehearsed scenarios."""
+    return _state.get("clock", scenarios.DEMO_NOW)
 
 
 def board_now() -> datetime:
@@ -53,6 +85,36 @@ def board_now() -> datetime:
 # --------------------------------------------------------------------------
 # models
 # --------------------------------------------------------------------------
+
+class Donation(BaseModel):
+    donor_name: str = "My Restaurant"
+    lat: float
+    lon: float
+    address: str = ""
+    food_type: str = "produce"
+    quantity_lbs: float = Field(gt=0)
+    condition: str = "ambient"
+    ready_in_min: int = 15
+    expires_in_hours: float = 24.0
+
+    def to_donation(self, t: datetime) -> dict:
+        return {
+            "donor_name": self.donor_name, "lat": self.lat, "lon": self.lon,
+            "address": self.address, "food_type": self.food_type,
+            "quantity_lbs": self.quantity_lbs, "condition": self.condition,
+            "ready_at": t + timedelta(minutes=self.ready_in_min),
+            "expires_at": t + timedelta(hours=self.expires_in_hours),
+            "sb1383_tier": None,
+        }
+
+
+class LimitBody(BaseModel):
+    limit_lbs: float | None = None
+
+
+class ConfigBody(BaseModel):
+    updates: dict
+
 
 class SurplusReport(BaseModel):
     """A restaurant registering and reporting tonight's surplus."""
@@ -128,6 +190,18 @@ def _find_supplier(sid: str) -> dict:
     return s
 
 
+def _accepted_lbs() -> dict[str, float]:
+    """Current accepted pickup load by collector, used by balance scoring."""
+    loads: dict[str, float] = {}
+    b = board()
+    for supplier_id, claim in claims_mod.CLAIMS.all().items():
+        supplier = next((s for s in b["suppliers"] if s["id"] == supplier_id), None)
+        if supplier and supplier.get("report"):
+            agency_id = claim["agency_id"]
+            loads[agency_id] = loads.get(agency_id, 0.0) + float(supplier["report"]["lbs"])
+    return loads
+
+
 def _lifecycle(s: dict, b: dict) -> dict:
     """The request-lifecycle fields for one supplier row.
 
@@ -139,6 +213,7 @@ def _lifecycle(s: dict, b: dict) -> dict:
     """
     if not s.get("report"):
         return {"reporting": False, "status": None}
+    claims_mod.REQUESTS.advance_expired(datetime.now())
     out = {"reporting": True, "status": _status(s["id"]),
            "lbs": s["report"]["lbs"]}
     tgt = b["targets"].get(s["id"])
@@ -146,10 +221,17 @@ def _lifecycle(s: dict, b: dict) -> dict:
     out["matchedToId"] = tgt
     req = claims_mod.REQUESTS.get(s["id"])
     if req:
+        out["matchedToId"] = req.get("target")
+        out["matchedTo"] = _target_name(req.get("target"))
         out["requestedAt"] = req["requested_at"]
         out["declinedBy"] = [_target_name(x) for x in req["declined_by"]]
         out["openToAll"] = req["open_to_all"]
         out["allowFallback"] = req.get("allow_fallback", True)
+        out["deadlineAt"] = req.get("deadline_at")
+        out["rankedCandidates"] = req.get("candidates", [])
+        index = int(req.get("candidate_index", 0))
+        if req.get("candidates") and index < len(req["candidates"]):
+            out["recommendation"] = req["candidates"][index]
     out["windowClosed"] = _window_closed(s["report"], board_now())
     holder = claims_mod.CLAIMS.holder(s["id"])
     if holder:
@@ -225,7 +307,13 @@ def register_supplier(body: SurplusReport):
     registry.add_business(supplier)
     registry.save_report(supplier, has_surplus=True)
     _board.clear()
-    return {"supplier": supplier, "persisted": True,
+    b = board()
+    ranked = evaluate_insertions(supplier, dispatch.collectors(b["agencies"], b["pantries"]))
+    if ranked:
+        b["targets"][sid] = ranked[0]["agency_id"]
+        claims_mod.REQUESTS.open(sid, ranked[0]["agency_id"], datetime.now(),
+                                 allow_fallback=True, candidates=ranked)
+    return {"supplier": supplier, "persisted": True, "ranking": ranked,
             "registered_total": registry.count()}
 
 
@@ -245,6 +333,7 @@ def update_report(supplier_id: str, body: ReportUpdate):
     if not body.has_surplus:
         s["report"] = None
         registry.save_report(s, has_surplus=False)
+        claims_mod.REQUESTS.cancel(supplier_id)
         return {"supplier": s, "cleared": True}
 
     rep = dict(s.get("report") or {})
@@ -278,7 +367,16 @@ def update_report(supplier_id: str, body: ReportUpdate):
     # Every supplier's report persists now, curated ones included -- an updated
     # weight that vanished on restart was its own small bug.
     registry.save_report(s, has_surplus=True)
-    return {"supplier": s, "cleared": False, "persisted": True}
+    ranked = []
+    if not claims_mod.CLAIMS.is_claimed(supplier_id):
+        claims_mod.REQUESTS.cancel(supplier_id)
+        ranked = evaluate_insertions(s, dispatch.collectors(b["agencies"], b["pantries"]))
+        if ranked:
+            b["targets"][supplier_id] = ranked[0]["agency_id"]
+            claims_mod.REQUESTS.open(supplier_id, ranked[0]["agency_id"], datetime.now(),
+                                     allow_fallback=True, candidates=ranked)
+    return {"supplier": s, "cleared": False, "persisted": True,
+            "ranking": ranked}
 
 
 @app.post("/api/board/dispatch/{supplier_id}")
@@ -501,7 +599,7 @@ def business_view(lat: float | None = None, lon: float | None = None,
         if s["report"]:
             row["report"] = s["report"]
         if lat is not None and lon is not None and max_km:
-            if haversine_km(lat, lon, s["lat"], s["lon"]) > max_km:
+            if needs_mod.haversine_km(lat, lon, s["lat"], s["lon"]) > max_km:
                 continue
         sups.append(row)
 
@@ -529,17 +627,14 @@ def request_pickup(supplier_id: str, allow_fallback: bool = True):
             and not claims_mod.REQUESTS.is_withdrawn(supplier_id):
         raise HTTPException(409, f"{s['name']} has already requested a pickup")
 
-    target = b["targets"].get(supplier_id)
-    if target is None:
-        # nothing viable when the board loaded -- re-check, the clock has moved
-        fresh = dispatch.assign_targets([s], b["agencies"], b["pantries"],
-                                        b["hotspots"], board_now())
-        target = fresh.get(supplier_id)
-    if target is None:
+    ranked = evaluate_insertions(s, dispatch.collectors(b["agencies"], b["pantries"]))
+    if not ranked:
         raise HTTPException(422, "no collector can take this — nothing to request")
-
-    rec = claims_mod.REQUESTS.open(supplier_id, target, board_now(),
-                                   allow_fallback=allow_fallback)
+    target = ranked[0]["agency_id"]
+    b["targets"][supplier_id] = target
+    rec = claims_mod.REQUESTS.open(supplier_id, target, datetime.now(),
+                                   allow_fallback=allow_fallback,
+                                   candidates=ranked)
     return {"request": rec, "supplier": s["name"],
             "sentTo": _target_name(target), "status": _status(supplier_id)}
 
@@ -559,16 +654,30 @@ def decline_offer(agency_id: str, supplier_id: str):
     """A collector says no.
 
     Whether that ends the request is the donor's decision, taken when they
-    asked. With a fallback allowed it opens to every other collector minus this
-    one; without, it leaves every board. Either way it is off this one.
+    asked. With fallback allowed it moves to the next ranked feasible collector;
+    without fallback it leaves every board. Either way it is off this inbox.
     """
     s = _find_supplier(supplier_id)
     if not claims_mod.REQUESTS.visible_to(supplier_id, agency_id):
         raise HTTPException(404, "that request is not on this collector's board")
+
+    # Rankings are a snapshot of the network at request time. Refresh them
+    # before advancing so a previously filtered, less-optimal insertion (or a
+    # route that became available meanwhile) can still be offered next. Keep
+    # the original order and append only agencies not already represented;
+    # Requests._advance separately guarantees nobody is asked twice.
+    request = claims_mod.REQUESTS.get(supplier_id)
+    refreshed = evaluate_insertions(
+        s, dispatch.collectors(board()["agencies"], board()["pantries"]))
+    represented = {row.get("agency_id") for row in request.get("candidates", [])}
+    request["candidates"].extend(
+        row for row in refreshed if row.get("agency_id") not in represented)
+
     rec = claims_mod.REQUESTS.decline(supplier_id, agency_id)
     return {"declined": supplier_id, "supplier": s["name"],
-            "nowOpenToAll": rec["open_to_all"],
+            "nowOpenToAll": rec["open_to_all"], "nextAgency": _target_name(rec.get("target")),
             "requestEnded": rec["withdrawn"], "status": _status(supplier_id),
+            "allCandidatesAsked": rec["withdrawn"] and not rec.get("target"),
             "declinedBy": [_target_name(x) for x in rec["declined_by"]]}
 
 
@@ -576,6 +685,7 @@ def decline_offer(agency_id: str, supplier_id: str):
 def agency_offers(agency_id: str):
     """Reports this agency could take, and the ones it already has."""
     b = board()
+    claims_mod.REQUESTS.advance_expired(datetime.now())
     col = next((c for c in dispatch.request_targets(b["agencies"], b["pantries"])
                 if c["id"] == agency_id), None)
     if col is None:
@@ -605,6 +715,10 @@ def agency_offers(agency_id: str):
                              board_now())
         best = next((p for p in r["pairs"] if p["collector"]["id"] == agency_id), None)
         req = claims_mod.REQUESTS.get(s["id"]) or {}
+        candidate_index = int(req.get("candidate_index", 0))
+        ranked = req.get("candidates") or []
+        recommendation = (ranked[candidate_index]
+                          if candidate_index < len(ranked) else None)
         row = {
             "supplier": {k: s[k] for k in ("id", "name", "type", "address",
                                            "lat", "lon", "surplus")},
@@ -615,6 +729,8 @@ def agency_offers(agency_id: str):
             "allowFallback": req.get("allow_fallback", True),
             "exclusiveToMe": req.get("target") == agency_id
                              and not req.get("open_to_all"),
+            "deadlineAt": req.get("deadline_at"),
+            "recommendation": recommendation,
             "viable": best is not None,
             "net": best["net"] if best else None,
             "miles": best["miles"] if best else None,
@@ -633,6 +749,37 @@ def agency_offers(agency_id: str):
                                            "capacityLbs") if k in col},
             "offers": offers, "accepted": mine,
             "acceptedLbs": round(sum(m["report"]["lbs"] for m in mine), 1)}
+
+
+@app.get("/api/board/agency/{agency_id}/offer-routes")
+def agency_offer_routes(agency_id: str):
+    """Fresh OSRM road geometry for the offers currently addressed here."""
+    inbox = agency_offers(agency_id)
+    agency = inbox["agency"]
+    rows = []
+    for offer in inbox["offers"]:
+        rec = offer.get("recommendation")
+        supplier = offer["supplier"]
+        if not rec or rec.get("agency_id") != agency_id:
+            continue
+        if rec.get("route_id"):
+            route_stops = read_table("simulation_route_optimized_vehicle_route_stops")
+            route_stops = route_stops[route_stops.route_id.eq(rec["route_id"])].sort_values("stop_sequence")
+            points = list(zip(route_stops.lat.astype(float), route_stops.lon.astype(float)))
+            points.insert(int(rec["insertion_position"]), (supplier["lat"], supplier["lon"]))
+        else:
+            points = [(agency["lat"], agency["lon"]),
+                      (supplier["lat"], supplier["lon"]),
+                      (rec["hotspot_lat"], rec["hotspot_lon"])]
+        try:
+            route = road_route(points)
+        except Exception as exc:
+            rows.append({"supplier_id": supplier["id"], "supplier_name": supplier["name"],
+                         "available": False, "error": str(exc)})
+            continue
+        rows.append({"supplier_id": supplier["id"], "supplier_name": supplier["name"],
+                     "hotspot_name": rec["hotspot_name"], "available": True, **route})
+    return {"agency": agency, "routes": rows}
 
 
 @app.post("/api/board/agency/{agency_id}/accept/{supplier_id}")
@@ -724,6 +871,27 @@ def accept_run(agency_id: str, supplier_ids: str = ""):
         if holder and holder != agency_id:
             raise HTTPException(409, f"{s['name']} has already been taken")
 
+    insertion_updates = []
+    insertion_suppliers = []
+    for s in sups:
+        request = claims_mod.REQUESTS.get(s["id"]) or {}
+        index = int(request.get("candidate_index", 0))
+        candidates = request.get("candidates") or []
+        candidate = candidates[index] if index < len(candidates) else None
+        if candidate and candidate.get("route_id") and candidate.get("agency_id") == agency_id:
+            try:
+                insertion_updates.append(apply_insertion(candidate, s))
+            except ValueError as exc:
+                raise HTTPException(409, str(exc)) from exc
+            claims_mod.CLAIMS.accept(s["id"], agency_id, datetime.now())
+            insertion_suppliers.append(s)
+    if insertion_suppliers:
+        return {"plan": {"feasible": True, "dynamicInsertion": True,
+                         "updates": insertion_updates}, "receipts": [],
+                "leftOnOffer": [s["name"] for s in sups if s not in insertion_suppliers],
+                "tonight": dispatch.LEDGER.deliveries,
+                "networkUpdated": True}
+
     plan = dispatch.combine_run(col, sups, b["hotspots"], board_now())
     if not plan.get("feasible"):
         raise HTTPException(422, plan.get("reason", "no viable run"))
@@ -743,9 +911,7 @@ def accept_run(agency_id: str, supplier_ids: str = ""):
 
 @app.get("/api/board/hotspots/forecast")
 def hotspots_forecast(months: float = 6.0):
-    """Only the blocks where Gi*'s cluster verdict actually changes between
-    today and the projection -- an overlay on the current map, not a second
-    one. See demo_data.forecast_changes()."""
+    """Return only blocks whose Gi* cluster verdict changes in projection."""
     return {"months": months, "changes": demo_data.forecast_changes(months)}
 
 
@@ -774,7 +940,7 @@ def board_pantries(lat: float | None = None, lon: float | None = None,
 
     if lat is not None and lon is not None:
         for r in out:
-            km = haversine_km(lat, lon, r["lat"], r["lon"])
+            km = needs_mod.haversine_km(lat, lon, r["lat"], r["lon"])
             r["distanceKm"] = round(km, 2)
             r["walkMinutes"] = round(km / 5.0 * 60)
         out = [r for r in out if r["distanceKm"] <= max_km]
@@ -783,6 +949,27 @@ def board_pantries(lat: float | None = None, lon: float | None = None,
     return {"view": "public", "count": len(out), "pantries": out,
             "openNow": sum(1 for r in out if r["openTonight"]),
             "note": "Pantry locations only. Outreach locations are never shown here."}
+
+
+@app.get("/api/config")
+def get_config():
+    return {"config": CONFIG,
+            "sources": CONFIG_SOURCES,
+            "unverified": [k for k, v in CONFIG_SOURCES.items() if not v["verified"]]}
+
+
+@app.post("/api/config")
+def set_config(body: ConfigBody):
+    """Live tuning. Only existing keys, only numeric/bool values."""
+    changed = {}
+    for k, v in body.updates.items():
+        if k not in CONFIG:
+            raise HTTPException(400, f"unknown config key: {k}")
+        if not isinstance(v, (int, float, bool)):
+            raise HTTPException(400, f"{k} must be numeric or boolean")
+        CONFIG[k] = type(CONFIG[k])(v) if not isinstance(CONFIG[k], dict) else v
+        changed[k] = CONFIG[k]
+    return {"changed": changed}
 
 
 @app.get("/api/geocode")
@@ -795,9 +982,288 @@ def geocode(address: str = Query(..., min_length=3)):
     return hit
 
 
+@app.get("/api/blocks")
+def blocks():
+    """Block polygons with need. Aggregated to block level, never finer."""
+    s = boot()
+    idx = s["idx"]
+    feats = []
+    for b in idx.blocks.values():
+        ring = [[round(x, 6), round(y, 6)] for x, y in
+                _to_lonlat(b.polygon_m.exterior.coords)]
+        feats.append({
+            "type": "Feature",
+            "geometry": {"type": "Polygon", "coordinates": [ring]},
+            "properties": {"block_id": b.block_id, "area": b.area, "label": b.label,
+                           "need_now": b.need_now, "need_trend": round(b.need_trend, 2),
+                           "in_panel": b.block_id in idx.panel_block_ids},
+        })
+    return {"type": "FeatureCollection", "features": feats,
+            "latest_count_date": idx.latest_count_date.date().isoformat()}
+
+
+def _to_lonlat(coords):
+    from needs import _LAT0, _LON0, _M_PER_DEG_LAT, _M_PER_DEG_LON
+    return [(x / _M_PER_DEG_LON + _LON0, y / _M_PER_DEG_LAT + _LAT0) for x, y in coords]
+
+
+@app.get("/api/forecast")
+def forecast():
+    return boot()["idx"].forecast
+
+
+@app.get("/api/scenarios")
+def list_scenarios():
+    out = []
+    for k, v in scenarios.SCENARIOS.items():
+        d = v["donation"]
+        out.append({"key": k, "label": v["label"], "blurb": v["blurb"],
+                    "donor_name": d["donor_name"], "lat": d["lat"], "lon": d["lon"],
+                    "address": d["address"], "food_type": d["food_type"],
+                    "quantity_lbs": d["quantity_lbs"], "condition": d["condition"]})
+    return {"scenarios": out}
+
+
+# --------------------------------------------------------------------------
+# RESTAURANT view
+# --------------------------------------------------------------------------
+
+@app.post("/api/restaurant/match")
+def restaurant_match(body: Donation, commit: bool = False,
+                     max_km: float | None = Query(None)):
+    """Post surplus, get ranked agencies who will collect it.
+
+    Deliberately returns no hubspot information. A donor learns that a pickup
+    was accepted and by whom -- never where the food goes afterwards.
+    """
+    s = boot()
+    t = now()
+    don = body.to_donation(t)
+    r = collection.match(don, s["agencies"], s["hubspots"], now=t, commit=commit)
+
+    matches = r["matches"]
+    if max_km is not None:
+        matches = [m for m in matches if m["one_way_km"] <= max_km]
+
+    return {
+        "view": "restaurant",
+        "quantity_lbs": r["quantity_lbs"],
+        "tax": r["tax"],
+        "feasible": len(matches),
+        "evaluated": r["evaluated"],
+        "matches": [_donor_safe(m) for m in matches],
+        "rejection_summary": r["rejection_summary"],
+        "headline": r["headline"],
+        "simulated_agency_data": r["simulated_agency_data"],
+    }
+
+
+def _donor_safe(m: dict) -> dict:
+    """Strip anything that would tell a donor where food goes after pickup."""
+    drop = {"need_basis", "need_now", "need_multiplier", "serves_hubspots"}
+    out = {k: v for k, v in m.items() if k not in drop}
+    out["collection_type"] = ("mobile outreach — taken out to people"
+                              if m["kind"] == "mobile"
+                              else "walk-in pantry — people collect it there")
+    return out
+
+
+@app.get("/api/restaurant/donors")
+def sample_donors(limit: int = 60):
+    """Real downtown food businesses, to prefill the form."""
+    return {"donors": boot()["donors"][:limit]}
+
+
+# --------------------------------------------------------------------------
+# AGENCY view
+# --------------------------------------------------------------------------
+
+@app.get("/api/agency")
+def agency_list():
+    s = boot()
+    budgets = ag_mod.intake_demand(s["agencies"], CONFIG)
+    t = now()
+    return {"simulated": ag_mod.is_simulated(s["agencies"]),
+            "agencies": [{
+                "agency_id": a["agency_id"], "name": a["name"],
+                "lat": a["lat"], "lon": a["lon"],
+                "has_mobile_pantry": a["has_mobile_pantry"],
+                "simulated": a.get("simulated", False),
+                "demand_lbs": budgets[a["agency_id"]]["demand_lbs"],
+                "limit_lbs": sched.LIMITS.get(a["agency_id"], t),
+                "scheduled_lbs": sched.SCHEDULE.committed_lbs(a["agency_id"], t),
+            } for a in s["agencies"]]}
+
+
+@app.get("/api/agency/{agency_id}")
+def agency_dashboard(agency_id: str, max_km: float | None = Query(None)):
+    """Everything one agency sees: hubspots, scheduled pickups, its own limit."""
+    s = boot()
+    t = now()
+    a = next((x for x in s["agencies"] if x["agency_id"] == agency_id), None)
+    if a is None:
+        raise HTTPException(404, "no such agency")
+
+    budgets = ag_mod.intake_demand(s["agencies"], CONFIG)
+    hub_budgets = demand_mod.daily_demand(s["hubspots"], CONFIG)
+
+    hubs = []
+    for h in s["hubspots"]:
+        km = needs_mod.haversine_km(a["lat"], a["lon"], h["lat"], h["lon"])
+        if max_km is not None and km > max_km:
+            continue
+        b = hub_budgets[h["dest_id"]]
+        hubs.append({
+            "dest_id": h["dest_id"], "name": h["name"], "block_id": h.get("block_id"),
+            "lat": h["lat"], "lon": h["lon"], "area": h.get("area"),
+            "need_now": h["need_now"], "need_trend": h["need_trend"],
+            "daily_demand_lbs": b["daily_demand_lbs"],
+            "committed_today_lbs": round(demand_mod.LEDGER.committed(h["dest_id"], t), 1),
+            "remaining_lbs": round(demand_mod.LEDGER.remaining(
+                h["dest_id"], t, b["daily_demand_lbs"]), 1),
+            "distance_km": round(km, 2),
+        })
+    hubs.sort(key=lambda x: x["distance_km"])
+
+    return {
+        "view": "agency",
+        "agency": {**{k: a[k] for k in
+                      ("agency_id", "name", "lat", "lon", "has_mobile_pantry",
+                       "mobile_capacity_lbs", "max_hubspot_stops", "accepts")},
+                   "simulated": a.get("simulated", False),
+                   "intake": budgets[agency_id]},
+        "limit_lbs": sched.LIMITS.get(agency_id, t),
+        "scheduled_lbs": sched.SCHEDULE.committed_lbs(agency_id, t),
+        "pickups": sched.SCHEDULE.for_agency(agency_id, t, max_km=max_km),
+        "hubspots": hubs if a["has_mobile_pantry"] else [],
+        "hubspots_note": ("" if a["has_mobile_pantry"] else
+                          "This agency has no mobile pantry, so it does not serve "
+                          "hubspots. People collect from the pantry instead."),
+    }
+
+
+@app.post("/api/agency/{agency_id}/limit")
+def set_limit(agency_id: str, body: LimitBody):
+    """An agency caps how much it wants today. Only ever tightens."""
+    s = boot()
+    if not any(x["agency_id"] == agency_id for x in s["agencies"]):
+        raise HTTPException(404, "no such agency")
+    sched.LIMITS.set(agency_id, now(), body.limit_lbs)
+    return {"agency_id": agency_id, "limit_lbs": body.limit_lbs,
+            "scheduled_lbs": sched.SCHEDULE.committed_lbs(agency_id, now())}
+
+
+@app.post("/api/agency/{agency_id}/distribute")
+def distribute(agency_id: str, available_lbs: float | None = None,
+               commit: bool = False):
+    """Plan the mobile pantry's run out to hubspots."""
+    s = boot()
+    t = now()
+    a = next((x for x in s["agencies"] if x["agency_id"] == agency_id), None)
+    if a is None:
+        raise HTTPException(404, "no such agency")
+    load = available_lbs if available_lbs is not None else \
+        sched.SCHEDULE.committed_lbs(agency_id, t)
+    if load <= 0:
+        load = a.get("mobile_capacity_lbs", 0) or 0
+    return distribution.plan(a, s["hubspots"], float(load), now=t, commit=commit)
+
+
+@app.delete("/api/agency/pickup/{pickup_id}")
+def cancel_pickup(pickup_id: str):
+    if not sched.SCHEDULE.cancel(pickup_id):
+        raise HTTPException(404, "no such pickup")
+    return {"pickup_id": pickup_id, "status": "cancelled"}
+
+
+# --------------------------------------------------------------------------
+# PUBLIC view -- a person looking for food
+# --------------------------------------------------------------------------
+
+@app.get("/api/pantries")
+def pantries(lat: float | None = None, lon: float | None = None,
+             max_km: float | None = None, only_with_food: bool = False):
+    """Pantries only. Never hubspots. See pantry_finder for why."""
+    s = boot()
+    return pantry_finder.find(s["agencies"], lat=lat, lon=lon, now=now(),
+                              max_km=max_km, only_with_food=only_with_food)
+
+
+# --------------------------------------------------------------------------
+# demo control
+# --------------------------------------------------------------------------
+
+@app.post("/api/reset")
+def reset():
+    dispatch.LEDGER.reset()
+    # Claims and requests are board state too. Clearing the ledger but leaving
+    # them would rebuild `targets` while every supplier kept a status pointing
+    # at the old assignment.
+    claims_mod.CLAIMS.reset()
+    claims_mod.REQUESTS.reset()
+    _board.clear()
+    demand_mod.LEDGER.reset()
+    sched.SCHEDULE.reset()
+    sched.LIMITS.reset()
+    return {"reset": True}
+
+
+@app.get("/api/state")
+def state():
+    t = now()
+    return {"clock": t.isoformat(),
+            "ledger": demand_mod.LEDGER.snapshot(t),
+            "pickups": sched.SCHEDULE.all(t),
+            "limits": sched.LIMITS.snapshot(t)}
+
+
+@app.post("/api/demo/{key}")
+def run_scenario(key: str, commit: bool = True):
+    if key not in scenarios.SCENARIOS:
+        raise HTTPException(404, "no such scenario")
+    s = boot()
+    return pipeline.run(scenarios.get(key)["donation"], s["agencies"],
+                        s["hubspots"], now=now(), commit=commit)
+
+
+@app.post("/api/board/simulation/{method}")
+def run_board_simulation(method: str):
+    """Freshly rebuild tonight's inputs/routes, optimize, and return UI data."""
+    if method not in {"greedy", "optimized", "route_optimized"}:
+        raise HTTPException(400, "method must be greedy, optimized, or route_optimized")
+    live = [supplier for supplier in board()["suppliers"] if supplier.get("report")]
+    synced = sync_live_suppliers(live)
+    run = run_optimization("simulation")
+    allocations = optimization_results("simulation", method, 5000)
+    routes = optimization_routes(method)
+    return {"method": method, "synced": synced, "run": run,
+            "allocations": allocations["rows"], "routes": routes["routes"]}
+
+
+@app.get("/api/board/network")
+def current_board_network(method: str = "route_optimized"):
+    """Return the current modeled operating network without a manual run."""
+    if method not in {"greedy", "optimized", "route_optimized"}:
+        raise HTTPException(400, "invalid network method")
+    allocations = optimization_results("simulation", method, 5000)
+    routes = optimization_routes(method)
+    b = board()
+    return {"method": method, "allocations": allocations["rows"],
+            "routes": routes["routes"],
+            "activeSuppliers": sum(bool(s.get("report")) for s in b["suppliers"]),
+            "activeAgencies": len(dispatch.collectors(b["agencies"], b["pantries"]))}
+
+
 app.mount("/static", StaticFiles(directory=HERE / "static"), name="static")
 
 
 @app.get("/")
 def index():
+    """The merged dispatch board is the front door now."""
     return FileResponse(HERE / "static" / "board" / "index.html")
+
+
+@app.get("/roles")
+def roles_view():
+    """The earlier three-role view, kept for the agency and pantry-finder tools."""
+    return FileResponse(HERE / "static" / "index.html")

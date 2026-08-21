@@ -15,7 +15,7 @@ Held in memory alongside the ledger, per evening.
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, timedelta
 
 
 class Claims:
@@ -61,9 +61,9 @@ class Requests:
 
     What a decline means is the DONOR's call, set when they request:
 
-      allow_fallback=True   a no from the matched collector releases the
-                            request to everyone else, minus whoever declined.
-                            A no from one agency is not a no from the city.
+      allow_fallback=True   a no from the matched collector advances the
+                            request to the next ranked feasible collector.
+                            Each collector is asked at most once.
       allow_fallback=False  a no ends it. The request leaves every board.
                             Some kitchens will only hand food to the partner
                             they have an agreement with, and a platform that
@@ -76,11 +76,15 @@ class Requests:
 
     # -- making one ---------------------------------------------------
     def open(self, supplier_id: str, target_id: str, when: datetime,
-             allow_fallback: bool = True) -> dict:
+             allow_fallback: bool = True, candidates: list[dict] | None = None,
+             timeout_minutes: int = 10) -> dict:
         rec = {"supplier_id": supplier_id, "target": target_id,
                "declined_by": [], "open_to_all": False,
                "allow_fallback": bool(allow_fallback), "withdrawn": False,
-               "requested_at": when.strftime("%H:%M")}
+               "requested_at": when.strftime("%H:%M"),
+               "candidates": candidates or [], "candidate_index": 0,
+               "offered_at": when.isoformat(),
+               "deadline_at": (when + timedelta(minutes=timeout_minutes)).isoformat()}
         self._req[supplier_id] = rec
         return rec
 
@@ -117,13 +121,51 @@ class Requests:
             return None
         if agency_id not in r["declined_by"]:
             r["declined_by"].append(agency_id)
-        if r.get("allow_fallback", True):
-            # a no releases it to the rest
+        if r.get("allow_fallback", True) and r.get("candidates"):
+            self._advance(r, datetime.now())
+        elif r.get("allow_fallback", True):
             r["open_to_all"] = True
         else:
             # the donor asked one collector and only that collector
             r["withdrawn"] = True
         return r
+
+    def _advance(self, r: dict, when: datetime) -> None:
+        candidates = r.get("candidates") or []
+        next_index = int(r.get("candidate_index", 0)) + 1
+        declined = set(r.get("declined_by") or [])
+
+        # Rankings are normally unique by agency, but keep the request state
+        # robust if an upstream scorer ever emits duplicate route candidates.
+        # A collector that declined or timed out must never be notified twice.
+        while next_index < len(candidates):
+            next_agency = candidates[next_index].get("agency_id")
+            if next_agency and next_agency not in declined:
+                break
+            next_index += 1
+
+        if next_index >= len(candidates):
+            r["withdrawn"] = True
+            r["target"] = None
+            return
+        r["candidate_index"] = next_index
+        r["target"] = candidates[next_index]["agency_id"]
+        r["open_to_all"] = False
+        r["offered_at"] = when.isoformat()
+        r["deadline_at"] = (when + timedelta(minutes=10)).isoformat()
+
+    def advance_expired(self, when: datetime) -> list[str]:
+        advanced = []
+        for supplier_id, r in self._req.items():
+            if r.get("withdrawn") or not r.get("deadline_at"):
+                continue
+            if when >= datetime.fromisoformat(r["deadline_at"]):
+                old = r.get("target")
+                if old and old not in r["declined_by"]:
+                    r["declined_by"].append(old)
+                self._advance(r, when)
+                advanced.append(supplier_id)
+        return advanced
 
     def is_withdrawn(self, supplier_id: str) -> bool:
         r = self._req.get(supplier_id)

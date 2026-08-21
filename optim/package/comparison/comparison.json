@@ -1,0 +1,72 @@
+{
+  "before": {
+    "total_meals_available": 1744.1666666666665,
+    "total_demand": 938.6,
+    "meals_delivered": 938.6,
+    "people_fed": 938.6,
+    "demand_served": 938.6,
+    "demand_coverage_pct": 100.0,
+    "unmet_demand": 0.0,
+    "food_utilization_pct": 53.813664596273306,
+    "hotspots_served": 161,
+    "total_route_distance": 939.9569016941064,
+    "average_route_distance": 5.662390974060882,
+    "meals_per_mile": 0.9985564213724473,
+    "total_meal_miles": 5087.54312088238,
+    "allocation_route_count": 166,
+    "total_route_duration_minutes": 1845.6,
+    "transport_cost": 1260.357245287521,
+    "food_value": null,
+    "net_benefit": null,
+    "route_distance_definition": "sum of full candidate-route miles for allocation arcs; no VRP consolidation"
+  },
+  "after": {
+    "total_meals_available": 1744.1666666666665,
+    "total_demand": 938.6,
+    "meals_delivered": 938.6,
+    "people_fed": 938.6,
+    "demand_served": 938.6,
+    "demand_coverage_pct": 100.0,
+    "unmet_demand": 0.0,
+    "food_utilization_pct": 53.813664596273306,
+    "hotspots_served": 161,
+    "total_route_distance": 803.414124015748,
+    "average_route_distance": 4.782226928665167,
+    "meals_per_mile": 1.1682642512040307,
+    "total_meal_miles": 4383.836488166011,
+    "allocation_route_count": 168,
+    "total_route_duration_minutes": 1528.0916666666667,
+    "transport_cost": 1062.6551856408573,
+    "food_value": null,
+    "net_benefit": null,
+    "route_distance_definition": "sum of full candidate-route miles for allocation arcs; no VRP consolidation"
+  },
+  "improvement": {
+    "additional_people_fed": 0.0,
+    "coverage_percentage_point_change": 0.0,
+    "unmet_demand_reduction_pct": null,
+    "food_utilization_change": 0.0,
+    "route_distance_change_pct": -14.526493441589086,
+    "meals_per_mile_change_pct": 16.99531705963411,
+    "meal_miles_change_pct": -13.83195416718785,
+    "transport_cost_change_pct": -15.686192179707156
+  },
+  "optimization": {
+    "solver": "scipy.optimize.linprog(method='highs')",
+    "stage1_maximum_people_fed": 938.5999999999999,
+    "stage2_people_fed": 938.5999999900005,
+    "stage2_objective_meal_miles": 4383.836488166011,
+    "stage1_status": "Optimization terminated successfully. (HiGHS Status 7: Optimal)",
+    "stage2_status": "Optimization terminated successfully. (HiGHS Status 7: Optimal)"
+  },
+  "assumptions": {
+    "demand_field": "historical_demand (main hotspots.csv need)",
+    "lbs_per_meal": 1.2,
+    "cost_per_mile": 0.76,
+    "wage_per_hour": 17.75,
+    "agency_capacity": "not enforced; authoritative capacity absent",
+    "donations": "synthetic reports tied to real main business IDs",
+    "candidate_hotspot_threshold": "historical_demand >= 1, aligned with Oscar UI",
+    "agency_demo_geocodes": "three missing main coordinates use explicitly synthetic Oscar UI geocodes"
+  }
+}
