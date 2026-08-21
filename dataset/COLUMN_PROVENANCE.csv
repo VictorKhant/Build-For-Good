@@ -1,0 +1,43 @@
+column,origin,source
+block_id,EVENT DATA,Organizer bundle: Downtown_BlockGrid + BlockLevel_Counts + Methodology_Periods
+location,EVENT DATA,Organizer bundle: Downtown_BlockGrid + BlockLevel_Counts + Methodology_Periods
+area,EVENT DATA,Organizer bundle: Downtown_BlockGrid + BlockLevel_Counts + Methodology_Periods
+lon,EVENT DATA,Organizer bundle: Downtown_BlockGrid + BlockLevel_Counts + Methodology_Periods
+lat,EVENT DATA,Organizer bundle: Downtown_BlockGrid + BlockLevel_Counts + Methodology_Periods
+need,EVENT DATA,Organizer bundle: Downtown_BlockGrid + BlockLevel_Counts + Methodology_Periods
+need_rank,EVENT DATA,Organizer bundle: Downtown_BlockGrid + BlockLevel_Counts + Methodology_Periods
+priority,EVENT DATA,Organizer bundle: Downtown_BlockGrid + BlockLevel_Counts + Methodology_Periods
+persistence,EVENT DATA,Organizer bundle: Downtown_BlockGrid + BlockLevel_Counts + Methodology_Periods
+months_nonzero,EVENT DATA,Organizer bundle: Downtown_BlockGrid + BlockLevel_Counts + Methodology_Periods
+months_observed,EVENT DATA,Organizer bundle: Downtown_BlockGrid + BlockLevel_Counts + Methodology_Periods
+avg_persons,EVENT DATA,Organizer bundle: Downtown_BlockGrid + BlockLevel_Counts + Methodology_Periods
+peak_persons,EVENT DATA,Organizer bundle: Downtown_BlockGrid + BlockLevel_Counts + Methodology_Periods
+latest_persons,EVENT DATA,Organizer bundle: Downtown_BlockGrid + BlockLevel_Counts + Methodology_Periods
+latest_individuals,EVENT DATA,Organizer bundle: Downtown_BlockGrid + BlockLevel_Counts + Methodology_Periods
+latest_tents,EVENT DATA,Organizer bundle: Downtown_BlockGrid + BlockLevel_Counts + Methodology_Periods
+latest_vehicles,EVENT DATA,Organizer bundle: Downtown_BlockGrid + BlockLevel_Counts + Methodology_Periods
+longitudinal_data,EVENT DATA,Organizer bundle: Downtown_BlockGrid + BlockLevel_Counts + Methodology_Periods
+business_in_block,EXTERNAL (merged),SB 1383 business inventory (CalRecycle thresholds + venue listings)
+nearest_business_m,EXTERNAL (merged),SB 1383 business inventory (CalRecycle thresholds + venue listings)
+business_within_200m,EXTERNAL (merged),SB 1383 business inventory (CalRecycle thresholds + venue listings)
+business_within_400m,EXTERNAL (merged),SB 1383 business inventory (CalRecycle thresholds + venue listings)
+business_within_800m,EXTERNAL (merged),SB 1383 business inventory (CalRecycle thresholds + venue listings)
+restaurant_in_block,EXTERNAL (merged),OpenStreetMap / City business certificates (pending pull)
+nearest_restaurant_m,EXTERNAL (merged),OpenStreetMap / City business certificates (pending pull)
+restaurant_within_200m,EXTERNAL (merged),OpenStreetMap / City business certificates (pending pull)
+restaurant_within_400m,EXTERNAL (merged),OpenStreetMap / City business certificates (pending pull)
+restaurant_within_800m,EXTERNAL (merged),OpenStreetMap / City business certificates (pending pull)
+foodsite_in_block,EXTERNAL (merged),City of San Diego Edible Food Recovery Directory + provider sites
+nearest_foodsite_m,EXTERNAL (merged),City of San Diego Edible Food Recovery Directory + provider sites
+foodsite_within_200m,EXTERNAL (merged),City of San Diego Edible Food Recovery Directory + provider sites
+foodsite_within_400m,EXTERNAL (merged),City of San Diego Edible Food Recovery Directory + provider sites
+foodsite_within_800m,EXTERNAL (merged),City of San Diego Edible Food Recovery Directory + provider sites
+unserved_need,EXTERNAL (merged),Derived: event need x external coverage
+supply_within_400m,EXTERNAL (merged),Derived: event need x external coverage
+pantry_within_400m,EXTERNAL (merged),SD Food Bank live EFAP roster + SD City College central list
+nearest_pantry_m,EXTERNAL (merged),SD Food Bank live EFAP roster + SD City College central list
+pantry_days_per_week,EXTERNAL (merged),SD Food Bank live EFAP roster + SD City College central list
+pantry_daily_within_400m,EXTERNAL (merged),SD Food Bank live EFAP roster + SD City College central list
+food_access_days_per_week,EXTERNAL (merged),SD Food Bank live EFAP roster + SD City College central list
+unserved_need_daily,EXTERNAL (merged),Derived: event need x external coverage
+unserved_need_any,EXTERNAL (merged),Derived: event need x external coverage
