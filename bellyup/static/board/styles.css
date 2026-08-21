@@ -65,16 +65,8 @@ body {
 button { font: inherit; color: inherit; cursor: pointer; }
 
 /* ================================ top bar ============================== */
-.topbar {
-  height: 62px;
-  display: flex;
-  align-items: center;
-  gap: 20px;
-  padding: 0 20px;
-  background: var(--surface);
-  border-bottom: 1px solid var(--line);
-}
-.brand { display: flex; align-items: center; gap: 12px; }
+
+
 .brand-mark {
   width: 38px; height: 38px;
   border-radius: 11px;
@@ -88,14 +80,8 @@ button { font: inherit; color: inherit; cursor: pointer; }
 .brand-name { font-family: "Space Grotesk", system-ui, sans-serif; font-weight: 700; font-size: 19px; letter-spacing: 0.2px; }
 .brand-tag { font-size: 11.5px; color: var(--muted); margin-top: -2px; }
 
-.topstats { display: flex; gap: 10px; margin-left: auto; }
-.stat-chip {
-  background: var(--surface-2);
-  border: 1px solid var(--line);
-  border-radius: 9px;
-  padding: 6px 12px;
-  text-align: right;
-}
+
+
 .stat-chip .v {
   font-family: "Space Grotesk", system-ui, sans-serif;
   font-weight: 600;
@@ -136,7 +122,7 @@ button { font: inherit; color: inherit; cursor: pointer; }
   display: grid; place-items: center;
 }
 .btn-theme:hover { border-color: var(--c-agency); }
-.topdate { color: var(--ink-2); font-size: 12.5px; text-align: right; min-width: 106px; }
+
 
 /* ================================ layout =============================== */
 .layout {
@@ -962,16 +948,10 @@ body.ledger-open { overflow: hidden; }
 /* ============================================================ role switch
    What each role sees is a product decision, not decoration: a business must
    never be shown a hotspot, and neither must the public view. */
-.roleswitch { display: flex; gap: 3px; margin-left: 18px; }
-.roleswitch button {
-  padding: 6px 13px; border: 1px solid var(--line); background: transparent;
-  color: var(--muted); border-radius: 7px; cursor: pointer;
-  font-family: var(--font-ui); font-size: 12px; font-weight: 600;
-}
+
+
 .roleswitch button:hover { color: var(--ink); }
-.roleswitch button.on {
-  background: var(--c-route); border-color: var(--c-route); color: #fff;
-}
+
 
 .agencybar, .publicbar {
   padding: 12px; margin: 0 12px 4px; border-radius: 10px;
@@ -1045,3 +1025,81 @@ body.ledger-open { overflow: hidden; }
 .mi-work { background: var(--c-route); }
 .mi-dead { background: color-mix(in srgb, var(--bad) 55%, transparent); }
 .mk-seq.drop { background: var(--c-route); }
+
+
+/* ================================================================ top bar
+   Three zones on a grid, so the nav sits dead centre whatever the brand or
+   the stats are doing. The old bar put four stat chips, three nav buttons and
+   a date in one flex row and let margin-left:auto decide the rest, which is
+   why nothing lined up. */
+.topbar {
+  height: 60px;
+  display: grid;
+  grid-template-columns: 1fr auto 1fr;
+  align-items: center;
+  padding: 0 18px;
+  background: var(--surface);
+  border-bottom: 1px solid var(--line);
+  position: relative; z-index: 1200;
+}
+
+.brand { display: flex; align-items: center; gap: 10px; text-decoration: none; }
+.brand-mark {
+  width: 30px; height: 30px; border-radius: 9px;
+  display: grid; place-items: center;
+  background: var(--c-supplier); color: #fff;
+  font: 700 13px/1 var(--font-brand); letter-spacing: -.02em;
+}
+.brand-name {
+  font: 600 17px/1 var(--font-brand); color: var(--ink); letter-spacing: -.01em;
+}
+
+/* the primary navigation, centred */
+.roleswitch {
+  display: inline-flex; gap: 2px; padding: 3px;
+  background: var(--surface-2); border: 1px solid var(--line); border-radius: 10px;
+}
+.roleswitch button {
+  appearance: none; border: 0; background: transparent; cursor: pointer;
+  padding: 7px 18px; border-radius: 8px; color: var(--ink-2);
+  font: 600 12.5px/1 var(--font-ui); letter-spacing: .01em;
+  transition: background .14s, color .14s;
+}
+.roleswitch button:hover { color: var(--ink); }
+.roleswitch button.on {
+  background: var(--surface); color: var(--ink);
+  box-shadow: 0 1px 3px rgba(0,0,0,.10);
+}
+
+.topright { display: flex; align-items: center; gap: 10px; justify-self: end; }
+
+/* two figures, inline -- the detail lives in the panel where there is room */
+.topstats { display: flex; align-items: center; gap: 16px; margin-right: 4px; }
+.stat-chip { display: flex; align-items: baseline; gap: 5px; white-space: nowrap; }
+.stat-chip .v { font: 600 13.5px/1 var(--font-brand); color: var(--ink); }
+.stat-chip .k {
+  font: 500 10.5px/1 var(--font-ui); color: var(--muted);
+  text-transform: uppercase; letter-spacing: .06em;
+}
+@media (max-width: 1180px) { .topstats { display: none; } }
+
+/* a selectable row in the left panel: restaurants, or collectors */
+.offer.pick { cursor: pointer; transition: border-color .14s, background .14s; }
+.offer.pick:hover { border-color: var(--c-supplier); }
+.offer.pick.on {
+  border-color: var(--c-agency);
+  background: color-mix(in srgb, var(--c-agency) 7%, transparent);
+}
+.pickdetail {
+  margin-top: 9px; padding-top: 9px; border-top: 1px solid var(--line);
+  font-size: 11.5px;
+}
+.pickdetail.bad { color: var(--bad); }
+.pd-row { display: flex; justify-content: space-between; gap: 10px; padding: 2px 0; }
+.pd-k { color: var(--muted); }
+.pd-v { color: var(--ink); font-weight: 600; text-align: right; }
+.pd-note { margin-top: 6px; color: var(--muted); line-height: 1.5; }
+.offer-acts { display: flex; gap: 6px; margin-top: 7px; }
+.offer-act.solo { background: transparent; color: var(--c-agency); border-color: var(--c-agency); }
+.offer-act.solo:hover { background: color-mix(in srgb, var(--c-agency) 12%, transparent); }
+.rb-h { margin-top: 14px; }

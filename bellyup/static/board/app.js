@@ -282,18 +282,16 @@ function renderFeed() {
 
 /* --------------------------------------------------------------- topbar */
 function renderStats() {
-  const totLbs = REPORTING.reduce((t, s) => t + s.report.lbs, 0);
+  /* Two figures only. Four chips crowded the bar and the detail belongs in
+     the panel, where there is room to say what it means. */
+  const reporting = SUPPLIERS.filter(s => s.report);
+  const lbs = reporting.reduce((t, s) => t + s.report.lbs, 0);
   const fed = tonight.reduce((t, r) => t + r.servedMeals, 0);
   $("topstats").innerHTML = [
-    [fmtInt(totLbs) + " lbs", "reported tonight"],
-    ["~" + fmtInt(totLbs / C.LBS_PER_MEAL), "potential meals"],
-    [REPORTING.length - tonight.length, "pending reports"],
-    [fmtInt(fed), "people fed tonight"],
-  ].map(([v, k]) => `<div class="stat-chip"><div class="v">${v}</div><div class="k">${k}</div></div>`).join("");
-  $("ledgerCount").textContent = tonight.length;
+    [fmtInt(lbs) + " lbs", "reported"],
+    [fmtInt(fed), "people fed"],
+  ].map(([v, k]) => `<div class="stat-chip"><span class="v">${v}</span><span class="k">${k}</span></div>`).join("");
 }
-$("topdate").textContent = new Date().toLocaleDateString("en-US",
-  { weekday: "short", month: "short", day: "numeric", year: "numeric" });
 
 /* ------------------------------------------------- selection + animation */
 let animToken = 0;
@@ -1028,10 +1026,21 @@ function wireForm() {
   });
 }
 
-function showEmpty() {
+function showEmpty(msg) {
   $("resultBody").hidden = true;
-  $("resultEmpty").style.display = "";
+  const e = $("resultEmpty");
+  e.style.display = "";
+  if (msg) e.innerHTML = msg;
 }
+
+const EMPTY_BY_ROLE = {
+  business: `<div class="re-icon">&#9678;</div><p>Pick a restaurant on the left to
+     see which agency is collecting from it.</p>`,
+  agency: `<div class="re-icon">&#9678;</div><p>Add offers to a run on the right to
+     see the optimal route. Nothing is taken until you accept.</p>`,
+  public: `<div class="re-icon">&#9678;</div><p>Enter your address on the left to
+     find food near you.</p>`,
+};
 
 /* ============================================================= role views */
 /* Three audiences, three different boards. The split is enforced on the
@@ -1050,32 +1059,39 @@ function setRole(next) {
     .forEach(b => b.classList.toggle("on", b.dataset.role === next));
   document.body.dataset.role = next;
 
-  $("agencyBar").hidden = next !== "agency";
+  const heads = {
+    business: ["Restaurants tonight",
+               "Pick one to see which agency is collecting from it."],
+    agency:   ["Collectors",
+               "Pick who you are. Offers appear on the right."],
+    public:   ["Food near you",
+               "Enter your address; the closest option is shown here."],
+  };
+  $("feedTitle").textContent = heads[next][0];
+  $("feedSub").textContent = heads[next][1];
   $("publicBar").hidden = next !== "public";
   $("regOpen").hidden = next !== "business";
   if (next !== "business") { $("regForm").hidden = true; }
 
   selectedId = null;
+  basket = []; planned = null;
   clearFx();
-  showEmpty();
+  showEmpty(EMPTY_BY_ROLE[next]);
   buildLayers();
   if (next === "agency") loadOffers();
   else if (next === "public") renderPantries();
-  else renderBusiness();
+  else { renderBusiness(); }
 }
 
 /* ------------------------------------------------------------- business */
 function renderBusiness() {
-  const mine = SUPPLIERS.filter(s => s.report);
+  const reporting = SUPPLIERS.filter(s => s.report);
+  const quiet = SUPPLIERS.filter(s => !s.report);
+
   $("feed").innerHTML = `
-    <div class="sec-head">Your request</div>
-    <div class="offer-sub" style="margin:0 2px 10px">
-      Report what you have and an agency will take it. You are not charged, and
-      you do not arrange the run &mdash; the collector does.
-    </div>
-    <div class="sec-head">Reported tonight (${mine.length})</div>
-    ${mine.map(s => `
-      <div class="offer ${s.status === "accepted" ? "taken" : ""}">
+    <div class="sec-head">Reporting tonight (${reporting.length})</div>
+    ${reporting.map(s => `
+      <div class="offer pick ${selectedId === s.id ? "on" : ""}" data-pick="${s.id}">
         <div class="offer-top">
           <span>${typeIcon[s.type] || "🍽"}</span>
           <span class="offer-name">${s.name}</span>
@@ -1084,41 +1100,130 @@ function renderBusiness() {
         <div class="offer-sub">${s.report.items || ""}<br>
           ${s.status === "accepted"
             ? `<b style="color:var(--c-route)">accepted by ${s.acceptedBy || "an agency"}</b>`
-            : s.status === "delivered" ? "delivered" : "waiting for an agency to accept"}
-        </div>
-      </div>`).join("")}`;
+            : s.status === "delivered" ? "delivered" : "waiting for an agency"}</div>
+        ${selectedId === s.id && s.__match ? bizMatch(s) : ""}
+      </div>`).join("")}
+    ${quiet.length ? `<div class="sec-head">Quiet tonight (${quiet.length})</div>
+      ${quiet.map(s => `
+        <button class="quiet-row" data-edit="${s.id}">
+          <span>${typeIcon[s.type] || "🍽"}</span>
+          <span class="qr-name">${s.name}</span>
+          <span class="qr-act">report&nbsp;+</span>
+        </button>`).join("")}` : ""}`;
+
+  $("feed").querySelectorAll("[data-pick]").forEach(el =>
+    el.addEventListener("click", ev => {
+      if (ev.target.dataset.edit) return;
+      pickRestaurant(el.dataset.pick);
+    }));
+  $("feed").querySelectorAll("[data-edit]").forEach(b =>
+    b.addEventListener("click", ev => {
+      ev.stopPropagation();
+      openForm(SUPPLIERS.find(x => x.id === b.dataset.edit));
+    }));
+
   $("feedFoot").innerHTML =
     `<span class="dot dot-quiet"></span> Collection points only — we never show
      you where the food is handed out.`;
   renderStats();
 }
 
-/* --------------------------------------------------------------- agency */
-async function loadOffers() {
-  const sel = $("agencySel");
-  const collecting = [
-    ...AGENCIES.filter(a => a.mobileCapable !== false)
-      .map(a => ({ id: a.id, name: a.name })),
-    ...PANTRIES.filter(p => p.dispatchable).map(p => ({ id: p.id, name: p.name })),
-  ];
-  if (!sel.options.length) {
-    sel.innerHTML = collecting.map(c => `<option value="${c.id}">${c.name}</option>`).join("");
-    sel.addEventListener("change", () => {
-      myAgency = sel.value; planned = null; basket = []; loadOffers();
-    });
-  }
-  myAgency = myAgency || sel.value || (collecting[0] || {}).id;
-  sel.value = myAgency;
+/* The match belongs beside the restaurant it is for, not across the screen. */
+function bizMatch(s) {
+  const m = s.__match;
+  if (!m) return "";
+  if (!m.ok) return `<div class="pickdetail bad">${m.reason}</div>`;
+  return `
+    <div class="pickdetail">
+      <div class="pd-row"><span class="pd-k">Collected by</span>
+        <span class="pd-v">${m.collector}</span></div>
+      <div class="pd-row"><span class="pd-k">Pickup</span>
+        <span class="pd-v">${m.pickupAt}${m.deferred ? " · held overnight" : ""}</span></div>
+      <div class="pd-row"><span class="pd-k">Distance</span>
+        <span class="pd-v">${m.miles.toFixed(1)} mi to you</span></div>
+      <div class="pd-row"><span class="pd-k">Your deduction</span>
+        <span class="pd-v">${fmt$(m.fmv)} est.</span></div>
+      <div class="pd-note">You pay nothing and arrange nothing — the collector
+        does. We do not show you where it goes from here.</div>
+    </div>`;
+}
 
+async function pickRestaurant(id) {
+  selectedId = id;
+  const s = SUPPLIERS.find(x => x.id === id);
+  clearFx();
+  try {
+    const r = await dispatchFor(s);
+    const b = r.pairs[0];
+    s.__match = b ? {
+      ok: true, collector: b.collector.name, pickupAt: b.pickupAt,
+      miles: b.leg1, fmv: r.fmv, deferred: b.deferred,
+      lat: b.collector.lat, lon: b.collector.lon,
+    } : { ok: false, reason: r.headline || "No agency can collect this yet." };
+  } catch (e) { s.__match = { ok: false, reason: e.message }; }
+
+  renderBusiness();
+
+  /* one line: the collector coming to this restaurant, and nothing else */
+  const m = s.__match;
+  if (m.ok) {
+    fxLayer.addLayer(L.polyline([[m.lat, m.lon], [s.lat, s.lon]], {
+      color: themeColor("--c-agency"), bellyRole: "--c-agency",
+      weight: 3, opacity: .9, className: "route-leg1", interactive: false }));
+    fxLayer.addLayer(L.circleMarker([s.lat, s.lon], {
+      radius: 8, color: themeColor("--c-supplier"), weight: 3,
+      fillOpacity: .9, interactive: false }));
+    map.flyToBounds(L.latLngBounds([[m.lat, m.lon], [s.lat, s.lon]]).pad(0.3),
+                    { duration: 0.7 });
+  }
+  showEmpty(EMPTY_BY_ROLE.business);
+}
+
+/* --------------------------------------------------------------- agency */
+function collectingList() {
+  return [
+    ...AGENCIES.filter(a => a.mobileCapable !== false)
+      .map(a => ({ id: a.id, name: a.name, kind: "agency",
+                   sub: a.program || "", lat: a.lat, lon: a.lon })),
+    ...PANTRIES.filter(p => p.dispatchable)
+      .map(p => ({ id: p.id, name: p.name, kind: "pantry",
+                   sub: p.operator || "", lat: p.lat, lon: p.lon })),
+  ];
+}
+
+/* LEFT: who you are. Same shape as the restaurant list in the business view,
+   so the left panel always answers "which one of these am I looking at". */
+function renderAgencyList() {
+  const list = collectingList();
+  if (!myAgency) myAgency = list[0] && list[0].id;
+  $("feed").innerHTML =
+    `<div class="sec-head">Collectors (${list.length})</div>`
+    + list.map(a => `
+      <div class="offer pick ${a.id === myAgency ? "on" : ""}" data-agency="${a.id}">
+        <div class="offer-top">
+          <span>${a.kind === "agency" ? "🚚" : "🚐"}</span>
+          <span class="offer-name">${a.name}</span>
+        </div>
+        <div class="offer-sub">${a.sub}${a.id === myAgency && offers.agency
+          ? ` · ${offers.agency.capacityLbs} lb capacity` : ""}</div>
+      </div>`).join("");
+  $("feed").querySelectorAll("[data-agency]").forEach(el =>
+    el.addEventListener("click", () => {
+      myAgency = el.dataset.agency; basket = []; planned = null; loadOffers();
+    }));
+  $("feedFoot").innerHTML =
+    `<span class="dot dot-quiet"></span> Pick a collector to see what is offered to it.`;
+}
+
+/* RIGHT: the run you are building for the selected collector. */
+async function loadOffers() {
+  const list = collectingList();
+  myAgency = myAgency || (list[0] || {}).id;
   try { offers = await api(`/api/board/agency/${myAgency}/offers`); }
-  catch (e) { $("feed").innerHTML = `<div class="empty">${e.message}</div>`; return; }
+  catch (e) { $("resultBody").innerHTML = `<div class="empty">${e.message}</div>`; return; }
 
   basket = basket.filter(id => offers.offers.some(o => o.supplier.id === id));
-
-  $("agencyStats").innerHTML =
-    `<b>${offers.agency.capacityLbs}</b> lb capacity &middot;
-     <b>${basket.length}</b> in this run &middot;
-     <b>${offers.offers.filter(o => o.viable).length}</b> offers open`;
+  renderAgencyList();
 
   const row = o => {
     const inRun = basket.includes(o.supplier.id);
@@ -1130,44 +1235,46 @@ async function loadOffers() {
         <span class="offer-net">${o.net != null ? fmt$(o.net) : "—"}</span>
       </div>
       <div class="offer-sub">
-        ${fmtInt(o.report.lbs)} lb ${o.supplier.surplus} &middot;
+        ${fmtInt(o.report.lbs)} lb ${o.supplier.surplus} ·
         pickup ${o.report.pickupFrom || o.report.time}–${o.report.pickupTo || "?"}
-        ${o.report.expiresAt ? `&middot; good until ${o.report.expiresAt}` : ""}
+        ${o.report.expiresAt ? `· good until ${o.report.expiresAt}` : ""}
         ${o.viable
           ? `<br>${o.deferred ? `hold &amp; deliver ${o.deliversAt}` : `→ ${o.target || "drop-off"}`}
-             &middot; ${o.miles.toFixed(1)} mi on its own`
+             · ${o.miles.toFixed(1)} mi alone`
           : `<br><span style="color:var(--bad)">${o.whyNot}</span>`}
       </div>
-      ${o.viable ? `<button class="offer-act ${inRun ? "ghost" : ""}"
-         data-toggle="${o.supplier.id}">${inRun ? "Remove from run" : "Add to run"}</button>` : ""}
+      ${o.viable ? `<div class="offer-acts">
+          <button class="offer-act ${inRun ? "ghost" : ""}" data-toggle="${o.supplier.id}">
+            ${inRun ? "Remove" : "Add to run"}</button>
+          <button class="offer-act solo" data-solo="${o.supplier.id}">Accept just this</button>
+        </div>` : ""}
     </div>`;
   };
 
-  $("feed").innerHTML =
-    `<div class="sec-head">Build a run (${basket.length} selected)</div>`
-    + `<div class="offer-sub" style="margin:0 2px 9px">
-         Adding is free — nothing is taken until you accept the run.
-       </div>`
-    + (planned ? renderPlan(planned) : (basket.length
-        ? `<div class="empty">Solving…</div>` : ""))
-    + (basket.length
-        ? `<button class="plan-btn" id="acceptBtn">Accept this run &amp; log receipts</button>`
-        : "")
-    + `<div class="sec-head">Offered to you (${offers.offers.length})</div>`
-    + (offers.offers.map(row).join("") || `<div class="empty">Nothing waiting.</div>`);
+  $("resultEmpty").style.display = "none";
+  $("resultBody").hidden = false;
+  $("resultBody").innerHTML = `
+    <div class="rb-eyebrow">${offers.agency.name}</div>
+    <div class="rb-source">${offers.agency.capacityLbs} lb capacity ·
+      <b>${basket.length}</b> in this run ·
+      ${offers.offers.filter(o => o.viable).length} offers open</div>
+    ${basket.length ? (planned ? renderPlan(planned) : `<div class="empty">Solving…</div>`) : ""}
+    ${basket.length ? `<button class="plan-btn" id="acceptBtn">
+        Accept this run &amp; log receipts</button>` : ""}
+    <div class="rb-h">Offered to you (${offers.offers.length})</div>
+    ${offers.offers.map(row).join("") || `<div class="empty">Nothing waiting.</div>`}`;
 
-  $("feed").querySelectorAll("[data-toggle]").forEach(b =>
+  $("resultBody").querySelectorAll("[data-toggle]").forEach(b =>
     b.addEventListener("click", () => {
       const id = b.dataset.toggle;
       basket = basket.includes(id) ? basket.filter(x => x !== id) : [...basket, id];
       previewRun();
     }));
+  $("resultBody").querySelectorAll("[data-solo]").forEach(b =>
+    b.addEventListener("click", () => acceptRun([b.dataset.solo])));
   const ab = $("acceptBtn");
-  if (ab) ab.addEventListener("click", acceptRun);
+  if (ab) ab.addEventListener("click", () => acceptRun(basket));
 
-  $("feedFoot").innerHTML =
-    `<span class="dot dot-quiet"></span> Accepting books the run and logs a
-     receipt for every donor.`;
   renderStats();
   buildLayers();
   drawAgencyMarkers();
@@ -1184,110 +1291,23 @@ async function previewRun() {
   loadOffers();
 }
 
-async function acceptRun() {
-  const btn = $("acceptBtn");
-  if (btn) { btn.disabled = true; btn.textContent = "Booking…"; }
+/* Only accepting books anything. Everything before this is a sketch. */
+async function acceptRun(ids) {
+  if (!ids || !ids.length) return;
   try {
     const res = await api(
-      `/api/board/agency/${myAgency}/accept-run?supplier_ids=${basket.join(",")}`,
+      `/api/board/agency/${myAgency}/accept-run?supplier_ids=${ids.join(",")}`,
       { method: "POST" });
     tonight = res.tonight;
-    basket = []; planned = null;
+    basket = basket.filter(x => !ids.includes(x));
+    planned = null;
     await refreshAll();
     $("ledgerCount").textContent = tonight.length;
     if (res.leftOnOffer.length)
       alert("Too much for one load — still on offer: " + res.leftOnOffer.join(", "));
     loadOffers();
     openLedger();
-  } catch (e) {
-    alert(e.message);
-    if (btn) { btn.disabled = false; btn.textContent = "Accept this run & log receipts"; }
-  }
-}
-
-function renderPlan(p) {
-  if (!p.feasible) return `<div class="offer dead"><div class="offer-sub">${p.reason}</div></div>`;
-  const deadPct = Math.round(p.deadheadMi / p.miles * 100);
-  return `
-    <div class="offer taken">
-      <div class="offer-top">
-        <span class="offer-name">${p.pickups.length} pickup${p.pickups.length > 1 ? "s" : ""}
-          → ${p.stops.length} drop${p.stops.length > 1 ? "s" : ""}</span>
-        <span class="offer-net">${fmt$(p.net)}</span>
-      </div>
-      <div class="offer-sub">
-        ${p.loadedLbs}/${p.capacityLbs} lb loaded &middot; ${fmtInt(p.minutes)} min &middot;
-        ${p.crew} crew<br>
-        ${p.pickups.map((x, i) => `<b>${i + 1}.</b> ${x.name} — ${fmtInt(x.lbs)} lb${
-          x.offeredLbs && x.lbs < x.offeredLbs
-            ? ` <span style="color:var(--bad)">of ${fmtInt(x.offeredLbs)}</span>` : ""}
-          <span style="opacity:.7">(${x.window})</span>`).join("<br>")}
-        <br>${p.stops.map((x, i) => `<b>${p.pickups.length + i + 1}.</b> ${x.location}
-          — ${fmtInt(x.meals)} meals`).join("<br>")}
-      </div>
-
-      <div class="mi-split">
-        <div class="mi-bar">
-          <span class="mi-work" style="width:${100 - deadPct}%"></span>
-          <span class="mi-dead" style="width:${deadPct}%"></span>
-        </div>
-        <div class="offer-sub" style="margin-top:4px">
-          ${p.miles} mi total — <b>${p.workingMi} carrying food</b>,
-          <b style="color:var(--bad)">${p.deadheadMi} empty</b> to and from base
-          (${deadPct}%).${deadPct > 50
-            ? " A depot this far out spends most of its miles empty; a closer collector will usually beat it."
-            : ""}
-        </div>
-      </div>
-
-      <div class="offer-sub" style="margin-top:6px">
-        ${fmt$(p.cost)} together${p.pickups.length > 1
-          ? ` against ${fmt$(p.soloCost)} as separate runs —
-             <b style="color:var(--c-route)">saves ${fmt$(p.saved)}</b>` : ""}.
-        ${p.partial ? `<br>Only ${fmtInt(p.partial.took)} lb of ${p.partial.name}'s
-          ${fmtInt(p.partial.of)} lb fits; ${fmtInt(p.partial.leaves)} lb stays.` : ""}
-        ${p.missedWindows.length
-          ? `<br><span style="color:var(--bad)">Cannot make the window at
-             ${p.missedWindows.join(", ")}.</span>` : ""}
-        ${p.leftBehind.length
-          ? `<br>Over capacity — ${p.leftBehind.map(x => x.name).join(", ")}
-             stays on offer.` : ""}
-      </div>
-    </div>`;
-}
-
-function drawPlan(p) {
-  clearFx();
-  const base = [p.collector.lat, p.collector.lon];
-  const pick = p.pickups.map(x => [x.lat, x.lon]);
-  const drop = p.stops.map(x => [x.lat, x.lon]);
-
-  /* Empty legs are drawn faint: with a depot far from downtown they are most
-     of the route, and showing them the same weight as the working legs is what
-     made the map look like two meaningless lines. */
-  const dead = { color: themeColor("--muted"), bellyRole: "--muted",
-                 weight: 2, opacity: .55, dashArray: "3 7", interactive: false };
-  fxLayer.addLayer(L.polyline([base, pick[0]], dead));
-  fxLayer.addLayer(L.polyline([drop[drop.length - 1], base], dead));
-
-  fxLayer.addLayer(L.polyline(pick, {
-    color: themeColor("--c-supplier"), bellyRole: "--c-supplier",
-    weight: 3, opacity: .95, className: "route-leg1", interactive: false }));
-  fxLayer.addLayer(L.polyline([pick[pick.length - 1], ...drop], {
-    color: themeColor("--c-route"), bellyRole: "--c-route",
-    weight: 3.5, opacity: .95, className: "route-leg2", interactive: false }));
-
-  /* every waypoint numbered, so the order is readable even when they overlap */
-  [...p.pickups, ...p.stops].forEach((x, i) => fxLayer.addLayer(
-    L.marker([x.lat, x.lon], {
-      icon: L.divIcon({ className: "",
-        html: `<div class="mk-seq ${i < p.pickups.length ? "" : "drop"}">${i + 1}</div>`,
-        iconSize: [20, 20], iconAnchor: [10, 10] }),
-      zIndexOffset: 950, interactive: false })));
-
-  /* fit the working part of the route, not the depot -- otherwise downtown is
-     a dot at the bottom of the screen */
-  map.flyToBounds(L.latLngBounds([...pick, ...drop]).pad(0.35), { duration: 0.8 });
+  } catch (e) { alert(e.message); }
 }
 
 function drawAgencyMarkers() {
@@ -1302,47 +1322,73 @@ let myPlace = null;
 
 async function renderPantries() {
   if (!myPlace) {
-    $("feed").innerHTML = `<div class="empty">Enter an address to see pantries near you.</div>`;
+    $("feed").innerHTML = `<div class="empty">Enter your address above.</div>`;
     $("feedFoot").innerHTML = "";
+    showEmpty(EMPTY_BY_ROLE.public);
     return;
   }
-  const r = await api(`/api/board/pantries?lat=${myPlace.lat}&lon=${myPlace.lon}&max_km=5`);
+  const km = +($("pubRange")?.value || 5);
+  const r = await api(`/api/board/pantries?lat=${myPlace.lat}&lon=${myPlace.lon}&max_km=${km}`);
   const list = r.pantries;
-  renderStats();
-  $("feed").innerHTML = list.length ? list.map((p, i) => `
-    <div class="pantry ${i === 0 ? "closest" : ""}">
-      ${i === 0 ? '<div class="pantry-badge">CLOSEST OPEN</div>' : ""}
-      <div class="pantry-name">${p.name}</div>
-      <div class="pantry-sub">${p.distanceKm} km &middot; about ${p.walkMinutes} min walk
-        &middot; ${p.openTonight ? "open tonight" : "not open tonight"}</div>
-      <div class="pantry-far">${p.kind}${p.schedule ? " · runs " + p.schedule : ""}
-        ${p.whyNot ? " · " + p.whyNot : ""}</div>
-    </div>`).join("")
-    : `<div class="empty">Nothing within 5 km. Try a different address.</div>`;
+  const nearest = list.find(p => p.openTonight) || list[0];
+
+  $("feed").innerHTML = nearest ? `
+    <div class="sec-head">Closest to you</div>
+    <div class="pantry closest">
+      <div class="pantry-badge">GO HERE</div>
+      <div class="pantry-name">${nearest.name}</div>
+      <div class="pantry-sub">${nearest.distanceKm} km · about
+        ${nearest.walkMinutes} min walk</div>
+      <div class="pantry-far">${nearest.kind}${nearest.schedule ? " · " + nearest.schedule : ""}</div>
+    </div>` : `<div class="empty">Nothing within ${km} km.</div>`;
   $("feedFoot").innerHTML =
-    `<span class="dot dot-quiet"></span> ${r.count} within 5 km, ${r.openNow} open tonight.`;
+    `<span class="dot dot-quiet"></span> Pantry locations only.`;
+
+  /* RIGHT: every pantry in range */
+  $("resultEmpty").style.display = "none";
+  $("resultBody").hidden = false;
+  $("resultBody").innerHTML = `
+    <div class="rb-eyebrow">Food near you</div>
+    <div class="rb-source">${r.count} within ${km} km · ${r.openNow} open tonight</div>
+    ${list.length ? list.map((p, i) => `
+      <div class="pantry ${p === nearest ? "closest" : ""}">
+        <div class="pantry-name">${i + 1}. ${p.name}</div>
+        <div class="pantry-sub">${p.distanceKm} km · ${p.walkMinutes} min walk ·
+          ${p.openTonight ? "open tonight" : "not open tonight"}</div>
+        <div class="pantry-far">${p.kind}${p.schedule ? " · runs " + p.schedule : ""}${
+          p.whyNot ? " · " + p.whyNot : ""}</div>
+      </div>`).join("") : `<div class="empty">Try a wider range.</div>`}`;
 
   clearFx();
-  list.forEach((p, i) => fxLayer.addLayer(L.circleMarker([p.lat, p.lon], {
-    radius: i === 0 ? 11 : 7,
-    color: themeColor(i === 0 ? "--c-route" : "--c-pantry"),
-    weight: i === 0 ? 3 : 1.5, fillOpacity: i === 0 ? .35 : .18, interactive: true,
+  list.forEach(p => fxLayer.addLayer(L.circleMarker([p.lat, p.lon], {
+    radius: p === nearest ? 11 : 7,
+    color: themeColor(p === nearest ? "--c-route" : "--c-pantry"),
+    weight: p === nearest ? 3 : 1.5,
+    fillOpacity: p === nearest ? .35 : .18,
   }).bindTooltip(`<b>${p.name}</b><div class="tip-k">${p.distanceKm} km · ${p.walkMinutes} min walk</div>`,
                  { className: "hs-tip", direction: "top", opacity: 1 })));
-  if (myPlace) {
-    fxLayer.addLayer(L.circleMarker([myPlace.lat, myPlace.lon], {
-      radius: 6, color: themeColor("--c-supplier"), weight: 3,
-      fillOpacity: .9, interactive: false }));
+
+  fxLayer.addLayer(L.circleMarker([myPlace.lat, myPlace.lon], {
+    radius: 6, color: themeColor("--c-supplier"), weight: 3,
+    fillOpacity: .9, interactive: false }));
+
+  /* the way to the nearest one, so it is obvious where to walk */
+  if (nearest) {
+    fxLayer.addLayer(L.polyline([[myPlace.lat, myPlace.lon], [nearest.lat, nearest.lon]], {
+      color: themeColor("--c-route"), bellyRole: "--c-route",
+      weight: 3.5, opacity: .95, className: "route-leg2", interactive: false }));
     map.flyToBounds(L.latLngBounds(
-      [[myPlace.lat, myPlace.lon], ...list.slice(0, 5).map(p => [p.lat, p.lon])]).pad(0.3),
+      [[myPlace.lat, myPlace.lon], [nearest.lat, nearest.lon]]).pad(0.45),
       { duration: 0.7 });
   }
+  renderStats();
 }
 
 function wireRoles() {
   document.querySelectorAll("#roleSwitch button").forEach(b =>
     b.addEventListener("click", () => setRole(b.dataset.role)));
 
+  $("pubRange").addEventListener("change", () => renderPantries());
   $("pubAddr").addEventListener("change", async e => {
     const q = e.target.value.trim();
     const hint = $("pubGeo");
