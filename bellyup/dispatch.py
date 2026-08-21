@@ -293,7 +293,7 @@ def compute(supplier: dict, agencies: list[dict], pantries: list[dict],
 
     candidates = [h for h in hotspots if h["need"] >= C["MIN_CANDIDATE_NEED"]]
     all_collectors = collectors(agencies, pantries)
-    dropoffs = [a for a in agencies if not a.get("mobileCapable", True)]
+    dropoffs = dropoff_sites(agencies)
 
     # one lookup per collector, not per (collector x block) pair
     import demo_data as _dd
@@ -828,6 +828,24 @@ def combine_run(collector: dict, suppliers: list[dict], hotspots: list[dict],
 # who each report is addressed to
 # --------------------------------------------------------------------------
 
+def dropoff_sites(agencies: list[dict]) -> list[dict]:
+    """Agencies that can RECEIVE food at a building of their own.
+
+    Owning a van does not stop a warehouse being a warehouse. This used to be
+    `not mobileCapable`, which read "can drive" as "cannot be a destination"
+    and barred both real food banks: Feeding San Diego, four road miles from a
+    donor and set up for prepared food, could not be sent 40 lb, while five
+    churches eleven miles further away could. Every agency the loader keeps has
+    a geocoded site -- transport-only operators with no building (A.B. Jones)
+    are dropped for having no address -- so a fixed site is what is left.
+
+    Being reachable as a drop-off does not make one preferable: a drop-off is
+    still credited at DROPOFF_CREDIT, so it only wins when no run to a counted
+    block was worth making.
+    """
+    return list(agencies)
+
+
 def request_targets(agencies: list[dict], pantries: list[dict]) -> list[dict]:
     """Everyone who can be asked to collect.
 
@@ -836,8 +854,9 @@ def request_targets(agencies: list[dict], pantries: list[dict]) -> list[dict]:
     who walk in. So it can receive a request; it just never gets a hotspot leg.
     """
     out = collectors(agencies, pantries)
+    have = {c["id"] for c in out}
     out += [{**a, "kind": "dropoff", "capacityLbs": a.get("intakeLbs", 400)}
-            for a in agencies if not a.get("mobileCapable", True)]
+            for a in dropoff_sites(agencies) if a["id"] not in have]
     return out
 
 

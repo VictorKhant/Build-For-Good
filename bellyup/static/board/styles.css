@@ -1211,8 +1211,12 @@ body.ledger-open { overflow: hidden; }
 .sim-controls .sim-restore { grid-column: 1 / -1; color: var(--c-route); }
 .sim-status { margin-top: 7px; color: var(--muted); font-size: 10.5px; line-height: 1.35; }
 .sim-panel > .sim-restore { width: 100%; margin-top: 8px; padding: 7px; border: 1px solid var(--c-route); border-radius: 8px; background: transparent; color: var(--c-route); font-size: 10.5px; }
-.sim-regenerate { width: 100%; margin-top: 8px; padding: 8px; border: 1px solid var(--c-route); border-radius: 8px; background: var(--c-route); color: white; font-size: 10.5px; font-weight: 700; }
+.sim-network-actions { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 8px; align-items: stretch; margin-top: 8px; }
+.sim-regenerate { width: 100%; padding: 8px; border: 1px solid var(--c-route); border-radius: 8px; background: var(--c-route); color: white; font-size: 10.5px; font-weight: 700; }
 .sim-regenerate:disabled { opacity: .55; cursor: wait; }
+.sim-network-toggle { display: flex; align-items: center; gap: 6px; padding: 7px 9px; border: 1px solid var(--line); border-radius: 8px; background: var(--surface-2); color: var(--ink); font-size: 10.5px; font-weight: 700; white-space: nowrap; cursor: pointer; }
+.sim-network-toggle input { width: 16px; height: 16px; margin: 0; accent-color: var(--c-route); cursor: pointer; }
+.sim-network-toggle:has(input:checked) { border-color: var(--c-route); color: var(--c-route); }
 .sim-kpis { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 7px; margin: 13px 0; }
 .sim-kpis > div { padding: 9px; border: 1px solid var(--line); border-radius: 9px; background: var(--surface-2); }
 .sim-kpis b { display: block; font: 700 17px "Space Grotesk", system-ui, sans-serif; font-variant-numeric: tabular-nums; }
