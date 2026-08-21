@@ -163,6 +163,14 @@ class Ledger:
             "fmv": round(supplier["report"]["lbs"] * cfg["FMV_PER_LB"], 2),
             "net": round(pair["net"], 2),
         }
+        rec["deferred"] = bool(pair.get("deferred"))
+        rec["deliversAt"] = pair.get("deliversAt")
+        if rec["deferred"]:
+            # Delivered on the next run, not tonight, so it must not consume
+            # tonight's capacity for this block -- the block still has its full
+            # need available to other donors this evening. (The next night's
+            # ledger is out of scope: this one is per-evening.)
+            rec["hotspotId"] = None
         self.deliveries.append(rec)
         return rec
 
@@ -177,6 +185,33 @@ class Ledger:
 
 
 LEDGER = Ledger()
+
+
+def tonight_close(collector: dict, now: datetime) -> datetime:
+    """When this crew stands down tonight.
+
+    Every collector in the pool is already flagged as running tonight, so the
+    bound is the evening cutoff -- outreach hands food out into the evening,
+    but not indefinitely. A published window that ends LATER than the cutoff
+    wins, since that site is demonstrably still open.
+
+    This is what makes a late report defer rather than fail: a hotel reporting
+    at 22:24 cannot have food carried to a block the same night, so it goes
+    back to the agency and out on the next scheduled run instead.
+    """
+    hh, mm = (int(x) for x in C["EVENING_CUTOFF"].split(":"))
+    close = now.replace(hour=hh, minute=mm, second=0, microsecond=0)
+
+    end = collector.get("endTime") if collector.get("kind") == "pantry" else None
+    if end:
+        try:
+            eh, em = (int(x) for x in end.split(":"))
+            published = now.replace(hour=eh, minute=em, second=0, microsecond=0)
+            if published > close:
+                close = published
+        except ValueError:
+            pass
+    return close
 
 
 def collectors(agencies: list[dict], pantries: list[dict]) -> list[dict]:
@@ -217,6 +252,10 @@ def compute(supplier: dict, agencies: list[dict], pantries: list[dict],
     all_collectors = collectors(agencies, pantries)
     dropoffs = [a for a in agencies if not a.get("mobileCapable", True)]
 
+    # one lookup per collector, not per (collector x block) pair
+    import demo_data as _dd
+    next_run = {c["id"]: _dd.next_run_datetime(c, now) for c in all_collectors}
+
     pairs: list[dict] = []
     rejected: dict[str, dict] = {}
 
@@ -243,16 +282,50 @@ def compute(supplier: dict, agencies: list[dict], pantries: list[dict],
         uncollected = lbs - collected
         col_meals = collected / C["LBS_PER_MEAL"]
 
+        # the crew has to get home; a one-way route is not a run
         for h in candidates:
             leg2 = road_mi(supplier, h)
-            miles = leg1 + leg2
+            leg_home = road_mi(h, col)
+            back_to_base = road_mi(supplier, col)
+
+            # ---- mode A: straight out tonight, base -> donor -> block -> base
+            miles = leg1 + leg2 + leg_home
             drive_min = miles / C["AVG_SPEED_MPH"] * 60
             minutes = drive_min + C["HANDLING_MIN"]
             arrives = start_load + timedelta(
                 minutes=leg2 / C["AVG_SPEED_MPH"] * 60 + C["HANDLING_MIN"] / 2)
+            direct_ok = arrives <= tonight_close(col, now)
+            deferred = False
+
+            # ---- mode B: hold it and deliver on the next run
+            # If the block cannot be reached before the crew stands down, the
+            # food goes back to the agency and out on its next scheduled run --
+            # but only if it is still good by then.
+            if not direct_ok:
+                nxt = next_run.get(col["id"])
+                if nxt is None:
+                    note("NO_NEXT_RUN",
+                         f"{col['name']} has no further scheduled run to carry "
+                         f"this on.")
+                    continue
+                if (expires_at - nxt).total_seconds() / 60 < C["SAFETY_MARGIN_MIN"]:
+                    note("EXPIRES_BEFORE_NEXT_RUN",
+                         f"{col['name']} could not reach {h['location']} before "
+                         f"standing down tonight, and its next run is "
+                         f"{nxt:%a %H:%M} — after this food expires at "
+                         f"{expires_at:%H:%M}.")
+                    continue
+                deferred = True
+                arrives = nxt + timedelta(
+                    minutes=road_mi(col, h) / C["AVG_SPEED_MPH"] * 60)
+                # tonight: base -> donor -> base.  next run: base -> block -> base
+                miles = (leg1 + back_to_base
+                         + road_mi(col, h) + leg_home)
+                drive_min = miles / C["AVG_SPEED_MPH"] * 60
+                minutes = drive_min + C["HANDLING_MIN"] + C["HOLD_HANDLING_MIN"]
 
             limit = C["MAX_TRANSIT_MIN"]["prepared" if prepared else "packaged/produce"]
-            if minutes > limit:
+            if not deferred and minutes > limit:
                 note("TRANSIT_TOO_LONG",
                      f"{minutes:.0f} min run exceeds the {limit} min safe window "
                      f"for {'prepared' if prepared else 'packaged'} food.")
@@ -302,6 +375,9 @@ def compute(supplier: dict, agencies: list[dict], pantries: list[dict],
 
             pairs.append({
                 "collector": col, "hotspot": h,
+                "deferred": deferred,
+                "deliversAt": arrives.strftime("%a %H:%M") if deferred else None,
+                "returnMi": round(leg_home, 2),
                 "remaining": round(room, 1),
                 "collectedLbs": collected, "uncollectedLbs": uncollected,
                 "leg1": leg1, "leg2": leg2, "miles": miles,
@@ -367,6 +443,9 @@ def compute(supplier: dict, agencies: list[dict], pantries: list[dict],
                           "capacityLbs": lbs},
             "hotspot": None,
             "dropoff": True,
+            "deferred": False,          # a drop-off is handed over on arrival
+            "deliversAt": None,
+            "returnMi": 0.0,
             "remaining": None,
             "collectedLbs": lbs, "uncollectedLbs": 0.0,
             "leg1": leg, "leg2": 0.0, "miles": leg,
