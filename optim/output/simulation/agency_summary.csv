@@ -1,6 +1,6 @@
 agency_id,donations_handled,suppliers_handled,hotspots_served,meals_handled,route_miles,capacity,utilization
 agency_jacobs_cushman_san_diego_food_bank,0,0,0,0.0,0.0,650,0.0
-agency_feeding_san_diego,4,4,37,138.59999999000053,586.8239481428458,750,0.18479999998666738
-agency_feeding_san_diego_south_bay,4,4,72,500.0,310.5172666626899,500,1.0
+agency_feeding_san_diego,5,5,25,138.5999999900005,425.7644108406904,750,0.18479999998666732
+agency_feeding_san_diego_south_bay,5,5,82,500.00000000000006,355.0037779368488,500,1.0000000000000002
 agency_a_b_jones_co,0,0,0,0.0,0.0,350,0.0
-agency_catholic_charities_diocese_of_san_diego,3,3,57,300.00000000000006,487.19304263103464,300,1.0000000000000002
+agency_catholic_charities_diocese_of_san_diego,3,3,56,300.00000000000006,477.5750243577507,300,1.0000000000000002

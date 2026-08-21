@@ -1,0 +1,218 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>BellyUp — Surplus Dispatch</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>🍲</text></svg>">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+<link rel="stylesheet" href="/static/board/styles.css">
+</head>
+<body>
+
+<header class="topbar">
+  <a class="brand" href="/">
+    <span class="brand-mark">Bu</span>
+    <span class="brand-name">BellyUp</span>
+  </a>
+
+  <nav class="roleswitch" id="roleSwitch" aria-label="View">
+    <button data-role="business">Business</button>
+    <button data-role="agency" class="on">Agency</button>
+    <button data-role="public">Find food</button>
+  </nav>
+
+  <div class="topright">
+    <div class="topstats" id="topstats"></div>
+    <button class="btn-ledger" id="ledgerBtn" title="Delivery ledger">
+      Ledger <span class="ledger-count" id="ledgerCount">0</span>
+    </button>
+    <button class="btn-theme" id="themeBtn" title="Light or dark">&#127769;</button>
+  </div>
+</header>
+
+<span id="topdate" hidden></span>
+
+<main class="layout">
+
+  <!-- ======================= left: voluntary report feed ================ -->
+  <aside class="feed">
+    <div class="feed-head">
+      <h2 id="feedTitle">Tonight&rsquo;s surplus reports</h2>
+      <p class="feed-sub" id="feedSub">Voluntary end-of-day reports from food businesses.</p>
+    </div>
+
+    <!-- ===================== public: where are you ==================== -->
+    <div class="publicbar" id="publicBar" hidden>
+      <label for="pubAddr">Where are you?</label>
+      <input id="pubAddr" placeholder="e.g. 16th &amp; Market, San Diego">
+      <div class="reg-hint" id="pubGeo">Type an address and press Enter.</div>
+      <label for="pubRange" style="margin-top:9px">Within</label>
+      <select id="pubRange">
+        <option value="2">2 km</option>
+        <option value="5" selected>5 km</option>
+        <option value="10">10 km</option>
+      </select>
+      <div class="publicbar-note">Pantry locations only &mdash; outreach
+        locations are never shown here.</div>
+    </div>
+
+    <div class="feed-scroll">
+    <button class="reg-open" id="regOpen">
+      <span class="reg-plus">+</span> Report surplus &middot; new restaurant
+    </button>
+
+    <form class="reg-form" id="regForm" hidden>
+      <div class="reg-title" id="regTitle">Register &amp; report tonight&rsquo;s surplus</div>
+
+      <div id="regWho">
+        <label for="regName">Restaurant</label>
+        <input id="regName" placeholder="e.g. Nolita Hall">
+
+        <label for="regAddr">Address</label>
+        <input id="regAddr" placeholder="e.g. 2305 India St, San Diego">
+        <div class="reg-hint" id="regGeo">Type your address and press Enter.</div>
+      </div>
+
+      <div class="reg-for" id="regFor" hidden></div>
+
+      <div class="reg-row">
+        <div>
+          <label for="regLbs">Pounds</label>
+          <input id="regLbs" type="number" min="1" step="1" value="40">
+        </div>
+        <div>
+          <label for="regKind">Food</label>
+          <select id="regKind">
+            <option value="prepared">Prepared / hot</option>
+            <option value="packaged/produce">Packaged / produce</option>
+          </select>
+        </div>
+      </div>
+
+      <label for="regItems">What is it?</label>
+      <input id="regItems" placeholder="e.g. plated entrees, service line overage">
+
+      <div class="reg-row">
+        <div><label for="regFrom">Pickup from</label>
+          <input id="regFrom" type="time" value="18:30"></div>
+        <div><label for="regTo">Pickup by</label>
+          <input id="regTo" type="time" value="20:30"></div>
+      </div>
+
+      <div class="reg-row">
+        <div><label for="regExp">Good until</label>
+          <input id="regExp" type="time" value="22:00"></div>
+        <div><label for="regFresh">Condition</label>
+          <select id="regFresh">
+            <option value="fresh">Fresh &mdash; just came off the line</option>
+            <option value="good">Good &mdash; held properly</option>
+            <option value="use_soon">Use soon &mdash; near its limit</option>
+          </select></div>
+      </div>
+
+      <div class="reg-actions">
+        <button type="submit" class="reg-submit" id="regSubmit">Find a collector</button>
+        <button type="button" class="reg-cancel" id="regCancel">Cancel</button>
+      </div>
+      <button type="button" class="reg-none" id="regNone" hidden>
+        Nothing to donate tonight
+      </button>
+      <button type="button" class="reg-remove" id="regRemove" hidden>
+        Remove this restaurant from the platform
+      </button>
+      <div class="reg-err" id="regErr" hidden></div>
+    </form>
+
+    <div class="feed-list" id="feed"></div>
+    </div>
+    <div class="feed-foot" id="feedFoot"></div>
+  </aside>
+
+  <!-- ======================= center: live map ========================== -->
+  <section class="map-wrap">
+    <div id="map"></div>
+
+    <div class="map-legend">
+      <div class="lg-row"><span class="lg-hotspot"></span> Hotspot block &middot; size = need (person&#8209;equivalents)</div>
+      <div class="lg-row"><span class="lg-hotspot lg-served"></span> Hotspot served tonight (at limit)</div>
+      <div class="lg-row"><span class="lg-supplier"></span> Supplier reporting surplus</div>
+      <div class="lg-row"><span class="lg-supplier lg-quiet"></span> Supplier, quiet tonight</div>
+      <div class="lg-row"><span class="lg-agency"></span> Agency HQ (collects &amp; distributes)</div>
+      <div class="lg-row"><span class="lg-dropoff"></span> Fixed drop-off site (receives only)</div>
+      <div class="lg-row"><span class="lg-pantry"></span> Mobile pantry &middot; unit available tonight</div>
+      <div class="lg-row"><span class="lg-pantry lg-pantry-idle"></span> Mobile pantry &middot; no unit tonight</div>
+    </div>
+
+    <div class="calc-overlay" id="calcOverlay">
+      <div class="calc-title" id="calcTitle">TRIANGULATING</div>
+      <div class="calc-line" id="calcLine">&nbsp;</div>
+      <div class="calc-count"><span id="calcCount">0</span> pair evaluations</div>
+    </div>
+  </section>
+
+  <!-- ======================= right: dispatch result ===================== -->
+  <aside class="result" id="resultPanel">
+    <section class="sim-panel" id="simPanel">
+      <div class="sim-title">Network intelligence</div>
+      <div class="sim-live"><span></span> Hybrid optimized network</div>
+      <div class="sim-status" id="simStatus">Loading the live operating network…</div>
+      <button id="simRegenerate" class="sim-regenerate">Regenerate network</button>
+      <button id="simRestore" class="sim-restore" hidden>Restore all routes</button>
+    </section>
+    <section class="network-detail" id="networkDetail"></section>
+    <section class="offer-detail" id="offerDetail">
+      <div class="result-empty" id="resultEmpty">
+        <div class="re-icon">&#9678;</div>
+        <p>Select a surplus report to compute the best
+          <strong>collector&nbsp;&rarr;&nbsp;hotspot</strong> dispatch.</p>
+      </div>
+      <div class="result-body" id="resultBody" hidden></div>
+    </section>
+  </aside>
+
+</main>
+
+<!-- ======================= ledger dashboard overlay ==================== -->
+<div class="ledger" id="ledger" hidden>
+  <div class="ledger-inner">
+    <div class="ledger-head">
+      <div>
+        <h2>Delivery ledger</h2>
+        <p class="ledger-sub">Every confirmed dispatch — the donor&rsquo;s receipt trail and
+          tonight&rsquo;s serving limits in one place.</p>
+      </div>
+      <div class="ledger-head-actions">
+        <button class="btn-ghost" id="resetBtn" title="Clear tonight's confirmed deliveries">Reset tonight</button>
+        <button class="btn-ghost" id="ledgerClose">&#10005; Close</button>
+      </div>
+    </div>
+
+    <div class="ledger-tiles" id="ledgerTiles"></div>
+
+    <div class="ledger-grid">
+      <section class="ledger-col">
+        <h3>Delivery log <span class="h-sub">newest first</span></h3>
+        <div id="ledgerLog"></div>
+      </section>
+      <section class="ledger-col">
+        <h3>Donor receipts <span class="h-sub">for tax-deduction records</span></h3>
+        <div class="donor-note">Estimated fair market value at $1.79/lb, toward an
+          IRC &sect;170(e)(3) enhanced deduction. Estimates only &mdash; donors should
+          consult a tax professional.</div>
+        <div id="ledgerDonors"></div>
+        <h3 class="mt">Hotspots served tonight <span class="h-sub">serving limit:
+          <span id="limitLabel"></span> deliveries/night</span></h3>
+        <div id="ledgerServed"></div>
+      </section>
+    </div>
+  </div>
+</div>
+
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script src="/static/board/app.js?v=20260821-network-layers"></script>
+</body>
+</html>

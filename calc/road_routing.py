@@ -147,5 +147,6 @@ def road_route(points: list[tuple[float, float]]) -> dict:
         "distance_miles": route["distance"] / METERS_PER_MILE,
         "duration_minutes": route["duration"] / 60,
         "leg_miles": [leg["distance"] / METERS_PER_MILE for leg in route["legs"]],
+        "leg_minutes": [leg["duration"] / 60 for leg in route["legs"]],
         "geometry": route["geometry"],
     }

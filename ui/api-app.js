@@ -11,6 +11,18 @@ const networkLayer = L.layerGroup().addTo(map);
 let suppliers = [], agencies = [], hotspots = [], allocations = [], vehicleRoutes = [];
 let activeMethod = "optimized", totalAssigned = 0;
 const supplierMarkers = new Map();
+const methodName = method => ({
+  greedy: "Greedy baseline",
+  optimized: "Global LP",
+  route_optimized: "Sequential miles optimized",
+})[method] || method;
+function weightedPercentile(rows, field, percentile) {
+  const sorted = [...rows].sort((a,b) => a[field] - b[field]);
+  const target = sorted.reduce((n,x)=>n+x.meals_delivered,0) * percentile;
+  let cumulative = 0;
+  for (const row of sorted) { cumulative += row.meals_delivered; if (cumulative >= target) return row[field]; }
+  return 0;
+}
 
 async function table(name) {
   const response = await fetch(`${API}/data/${name}?limit=5000`);
@@ -112,23 +124,27 @@ function focusRoute(routeId) {
 
 function renderRoutePanel(assigned) {
   const routeMiles = vehicleRoutes.reduce((n,x)=>n+(x.distance_miles||0),0);
-  const routeMinutes = vehicleRoutes.reduce((n,x)=>n+(x.duration_minutes||0),0);
   const uniqueHotspots = new Set(allocations.map(x=>x.hotspot_block_id)).size;
   const uniqueSuppliers = new Set(allocations.map(x=>x.business_id)).size;
+  const deliveryStops = vehicleRoutes.flatMap(x=>x.stops).filter(x=>x.stop_type === "hotspot");
+  const mealDistance = deliveryStops.reduce((n,x)=>n+x.meals_delivered*x.meal_distance_from_pickup_miles,0) / assigned;
+  const mealTransit = deliveryStops.reduce((n,x)=>n+x.meals_delivered*x.meal_transit_from_pickup_minutes,0) / assigned;
+  const p95Transit = weightedPercentile(deliveryStops, "meal_transit_from_pickup_minutes", .95);
+  const maxTransit = Math.max(...deliveryStops.map(x=>x.meal_transit_from_pickup_minutes));
+  const mealsPerMile = assigned / routeMiles;
   const cards = vehicleRoutes.map(route => {
-    const arcs = allocations.filter(x => x.agency_id === route.agency_id && x.business_id === route.supplier_id).length;
-    const itinerary = route.stops.map(stop => `<li><span class="stop-seq">${stop.stop_sequence}</span><span><b>${stop.stop_type}</b> · ${stop.stop_name}${stop.stop_type === "hotspot" ? ` <em>${Number(stop.meals_delivered).toFixed(1)} meals</em>` : ""}</span></li>`).join("");
+    const itinerary = route.stops.map(stop => `<li><span class="stop-seq">${stop.stop_sequence}</span><span><b>${stop.stop_type}</b> · ${stop.stop_name}${stop.stop_type === "hotspot" ? ` <em>${Number(stop.meals_delivered).toFixed(1)} meals · ${Number(stop.meal_distance_from_pickup_miles).toFixed(1)} mi · ${Math.round(stop.meal_transit_from_pickup_minutes)} min</em>` : ""}</span></li>`).join("");
     return `<article class="route-card" data-route-id="${route.route_id}">
       <div class="route-card-head"><span class="route-id">Truck ${String(route.truck_sequence).padStart(3,"0")}</span><span>${Number(route.distance_miles).toFixed(1)} mi · ${Math.round(route.duration_minutes)} min</span></div>
       <div class="route-path"><b>${route.agency_name}</b><span>→ pickup</span><b>${route.supplier_name}</b><span>→ ${route.hotspot_count} hotspots</span></div>
-      <div class="route-metrics"><span><b>${Number(route.meals_loaded).toFixed(1)}</b> meals</span><span><b>${arcs}</b> alloc-arcs</span><span><b>${route.hotspot_count}</b> hotspots</span></div>
+      <div class="route-metrics"><span><b>${Number(route.meals_loaded).toFixed(1)}</b> meals</span><span><b>${Number(route.meals_per_truck_mile).toFixed(2)}</b> meals/mi</span><span><b>${route.hotspot_count}</b> hotspots</span></div>
       <details><summary>Show stop-by-stop itinerary</summary><ol class="stop-list">${itinerary}</ol></details>
     </article>`;
   }).join("");
-  const methodLabel = activeMethod === "optimized" ? "Global LP optimized" : "Greedy baseline";
+  const methodLabel = methodName(activeMethod);
   $("resultBody").innerHTML = `<div class="rb-eyebrow">${methodLabel} · sequential routes</div><div class="rb-source">Capacity-constrained allocation + OSRM road paths</div>
-    <div class="network-kpis"><div><b>${routeMiles.toFixed(1)}</b><span>sequential miles</span></div><div><b>${assigned.toFixed(1)}</b><span>meals</span></div><div><b>${allocations.length}</b><span>alloc-arcs</span></div><div><b>${uniqueHotspots}</b><span>hotspots</span></div><div><b>${vehicleRoutes.length}</b><span>truck trips</span></div><div><b>${Math.round(routeMinutes)}</b><span>drive minutes</span></div></div>
-    <div class="rb-note">${uniqueSuppliers} suppliers are served. Each route is continuous: Agency → one Supplier pickup → hotspots in numbered order. Click a route card to isolate it on the map.</div>
+    <div class="network-kpis"><div><b>${routeMiles.toFixed(1)}</b><span>truck miles</span></div><div><b>${mealsPerMile.toFixed(2)}</b><span>meals per mile</span></div><div><b>${mealDistance.toFixed(1)} mi</b><span>avg meal distance</span></div><div><b>${mealTransit.toFixed(0)} min</b><span>avg meal transit</span></div><div><b>${p95Transit.toFixed(0)} min</b><span>P95 meal transit</span></div><div><b>${maxTransit.toFixed(0)} min</b><span>max meal transit</span></div></div>
+    <div class="rb-note">${assigned.toFixed(1)} meals · ${uniqueHotspots} hotspots · ${allocations.length} allocation arcs · ${vehicleRoutes.length} truck trips · ${uniqueSuppliers} suppliers. Meal distance/time begins at pickup; Agency → Supplier travel counts only toward truck miles.</div>
     <div class="rb-h">Truck routes</div><div class="route-list">${cards}</div>`;
   document.querySelectorAll(".route-card").forEach(card => card.addEventListener("click", event => {
     if (event.target.closest("details")) return;
@@ -155,7 +171,7 @@ function focusSupplier(id) {
 
 async function runNetwork() {
   activeMethod = $("methodSelect").value;
-  const methodLabel = activeMethod === "optimized" ? "Global LP" : "Greedy";
+  const methodLabel = methodName(activeMethod);
   $("runNetwork").disabled = true; $("apiStatus").textContent = `Running ${methodLabel} simulation…`;
   const response = await fetch(`${API}/optimize/simulation`, {method:"POST"});
   if (!response.ok) throw new Error(await response.text());

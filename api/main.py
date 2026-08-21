@@ -12,12 +12,19 @@ from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import RedirectResponse
 from fastapi.staticfiles import StaticFiles
+from pydantic import BaseModel
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
 from calc.database import connect, read_table, table_names
+from calc.sync_live_suppliers import sync_live_suppliers
+
+
+def records(frame) -> list[dict]:
+    """Return JSON-safe rows (numeric NaN must become JSON null)."""
+    return frame.astype(object).where(frame.notna(), None).to_dict("records")
 
 app = FastAPI(title="BellyUp Optimization API", version="1.0.0")
 app.add_middleware(
@@ -26,6 +33,9 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+class LiveBoardPayload(BaseModel):
+    suppliers: list[dict]
 
 PUBLIC_TABLES = {
     "businesses", "agencies", "hotspots", "mobile_pantries",
@@ -37,6 +47,8 @@ PUBLIC_TABLES = {
     "simulation_agency_summary", "simulation_hotspot_summary",
     "simulation_greedy_vehicle_routes", "simulation_greedy_vehicle_route_stops",
     "simulation_optimized_vehicle_routes", "simulation_optimized_vehicle_route_stops",
+    "simulation_route_optimized_allocations",
+    "simulation_route_optimized_vehicle_routes", "simulation_route_optimized_vehicle_route_stops",
 }
 
 @app.get("/")
@@ -71,7 +83,7 @@ def data(
             params=(limit, offset),
         )
         total = connection.execute(f'SELECT COUNT(*) FROM "{table_name}"').fetchone()[0]
-    return {"table": table_name, "total": total, "rows": frame.where(frame.notna(), None).to_dict("records")}
+    return {"table": table_name, "total": total, "rows": records(frame)}
 
 @app.post("/optimize/{mode}")
 def optimize(mode: str) -> dict:
@@ -91,26 +103,46 @@ def optimize(mode: str) -> dict:
             )
             if route_run.returncode:
                 raise HTTPException(status_code=500, detail=route_run.stderr or route_run.stdout)
+        sequential_run = subprocess.run(
+            [sys.executable, str(PROJECT_ROOT / "optim" / "optimize_sequential_routes.py")],
+            cwd=PROJECT_ROOT, capture_output=True, text=True,
+        )
+        if sequential_run.returncode:
+            raise HTTPException(status_code=500, detail=sequential_run.stderr or sequential_run.stdout)
+        route_run = subprocess.run(
+            [sys.executable, str(PROJECT_ROOT / "optim" / "build_vehicle_routes.py"), "--method", "route_optimized"],
+            cwd=PROJECT_ROOT, capture_output=True, text=True,
+        )
+        if route_run.returncode:
+            raise HTTPException(status_code=500, detail=route_run.stderr or route_run.stdout)
     output = PROJECT_ROOT / "optim" / "output"
     if mode == "simulation":
         output /= "simulation"
     comparison = json.loads((output / "comparison.json").read_text())
     return {"mode": mode, "comparison": comparison}
 
+@app.post("/simulation/live-suppliers")
+def live_suppliers(payload: LiveBoardPayload) -> dict:
+    return sync_live_suppliers(payload.suppliers)
+
 @app.get("/results/{mode}/{method}")
 def results(mode: str, method: str, limit: int = Query(500, ge=1, le=5000)) -> dict:
-    if mode not in {"standard", "simulation"} or method not in {"greedy", "optimized"}:
+    if mode not in {"standard", "simulation"} or method not in {"greedy", "optimized", "route_optimized"}:
         raise HTTPException(status_code=400, detail="invalid mode or method")
-    table = f"{mode}_{'baseline' if method == 'greedy' else 'optimized'}_allocations"
+    table = (
+        f"{mode}_baseline_allocations" if method == "greedy"
+        else f"{mode}_route_optimized_allocations" if method == "route_optimized"
+        else f"{mode}_optimized_allocations"
+    )
     if table not in table_names():
         raise HTTPException(status_code=404, detail="Run optimization first")
     frame = read_table(table).head(limit)
-    return {"mode": mode, "method": method, "total": len(read_table(table)), "rows": frame.where(frame.notna(), None).to_dict("records")}
+    return {"mode": mode, "method": method, "total": len(read_table(table)), "rows": records(frame)}
 
 @app.get("/routes/simulation/{method}")
 def simulation_routes(method: str) -> dict:
-    if method not in {"greedy", "optimized"}:
-        raise HTTPException(status_code=400, detail="method must be greedy or optimized")
+    if method not in {"greedy", "optimized", "route_optimized"}:
+        raise HTTPException(status_code=400, detail="method must be greedy, optimized, or route_optimized")
     route_table = f"simulation_{method}_vehicle_routes"
     stop_table = f"simulation_{method}_vehicle_route_stops"
     if route_table not in table_names():
@@ -121,7 +153,7 @@ def simulation_routes(method: str) -> dict:
     for route in routes.to_dict("records"):
         geometry = route.pop("geometry_geojson", None)
         route["geometry"] = json.loads(geometry) if geometry else None
-        route["stops"] = stops[stops.route_id.eq(route["route_id"])].sort_values("stop_sequence").where(lambda x: x.notna(), None).to_dict("records")
+        route["stops"] = records(stops[stops.route_id.eq(route["route_id"])].sort_values("stop_sequence"))
         rows.append(route)
     return {"total": len(rows), "routes": rows}
 
