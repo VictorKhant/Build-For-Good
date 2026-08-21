@@ -22,6 +22,12 @@
     </div>
   </div>
   <div class="topstats" id="topstats"></div>
+  <div class="topactions">
+    <button class="btn-ledger" id="ledgerBtn" title="Delivery ledger">
+      &#128220; Ledger <span class="ledger-count" id="ledgerCount">0</span>
+    </button>
+    <button class="btn-theme" id="themeBtn" title="Toggle light/dark mode">&#127769;</button>
+  </div>
   <div class="topdate" id="topdate"></div>
 </header>
 
@@ -46,6 +52,7 @@
 
     <div class="map-legend">
       <div class="lg-row"><span class="lg-hotspot"></span> Hotspot block &middot; size = need (person&#8209;equivalents)</div>
+      <div class="lg-row"><span class="lg-hotspot lg-served"></span> Hotspot served tonight (at limit)</div>
       <div class="lg-row"><span class="lg-supplier"></span> Supplier reporting surplus</div>
       <div class="lg-row"><span class="lg-supplier lg-quiet"></span> Supplier, quiet tonight</div>
       <div class="lg-row"><span class="lg-agency"></span> Agency HQ (collects &amp; distributes)</div>
@@ -73,6 +80,42 @@
   </aside>
 
 </main>
+
+<!-- ======================= ledger dashboard overlay ==================== -->
+<div class="ledger" id="ledger" hidden>
+  <div class="ledger-inner">
+    <div class="ledger-head">
+      <div>
+        <h2>Delivery ledger</h2>
+        <p class="ledger-sub">Every confirmed dispatch — the donor&rsquo;s receipt trail and
+          tonight&rsquo;s serving limits in one place.</p>
+      </div>
+      <div class="ledger-head-actions">
+        <button class="btn-ghost" id="resetBtn" title="Clear tonight's confirmed deliveries">Reset tonight</button>
+        <button class="btn-ghost" id="ledgerClose">&#10005; Close</button>
+      </div>
+    </div>
+
+    <div class="ledger-tiles" id="ledgerTiles"></div>
+
+    <div class="ledger-grid">
+      <section class="ledger-col">
+        <h3>Delivery log <span class="h-sub">newest first</span></h3>
+        <div id="ledgerLog"></div>
+      </section>
+      <section class="ledger-col">
+        <h3>Donor receipts <span class="h-sub">for tax-deduction records</span></h3>
+        <div class="donor-note">Estimated fair market value at $1.79/lb, toward an
+          IRC &sect;170(e)(3) enhanced deduction. Estimates only &mdash; donors should
+          consult a tax professional.</div>
+        <div id="ledgerDonors"></div>
+        <h3 class="mt">Hotspots served tonight <span class="h-sub">serving limit:
+          <span id="limitLabel"></span> deliveries/night</span></h3>
+        <div id="ledgerServed"></div>
+      </section>
+    </div>
+  </div>
+</div>
 
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 <script src="data.js"></script>
