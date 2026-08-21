@@ -47,6 +47,30 @@ def road_mi(a: dict, b: dict) -> float:
     return haversine_mi(a, b) * C["ROAD_FACTOR"]
 
 
+def run_cost(kind: str, miles: float, minutes: float, cfg: dict | None = None) -> dict:
+    """What a run actually costs, in its three real parts.
+
+      fuel     miles / mpg x price per gallon -- what goes in the tank
+      vehicle  miles x wear rate -- maintenance, tyres, insurance, depreciation
+      labour   minutes x wage x crew, because a 2,000 lb box truck run needs
+               two people and a pantry van needs one
+
+    Kept in one place so a routed run and a drop-off cannot be costed on
+    different assumptions.
+    """
+    c = cfg or C
+    mpg = c["MPG"].get(kind, c["MPG"]["pantry"])
+    wear = c["WEAR_PER_MILE"].get(kind, c["WEAR_PER_MILE"]["pantry"])
+    crew = c["STAFF_PER_RUN"].get(kind, 1)
+
+    fuel = miles / mpg * c["FUEL_PRICE_PER_GAL"]
+    vehicle = miles * wear
+    labour = minutes / 60 * c["WAGE_PER_HR"] * crew
+    return {"fuel": fuel, "vehicle": vehicle, "labor": labour, "crew": crew,
+            "mileage": fuel + vehicle,          # what the old field meant
+            "total": fuel + vehicle + labour}
+
+
 def _clock(t: str, base: datetime) -> datetime:
     """'19:25' on the evening `base` belongs to, rolling past midnight."""
     h, m = (int(x) for x in t.split(":"))
@@ -262,9 +286,8 @@ def compute(supplier: dict, agencies: list[dict], pantries: list[dict],
             surplus = col_meals - served
             boost = 1 + C["ACCESS_BOOST_MAX"] * (7 - min(h["accessDays"], 7)) / 7
 
-            labor = minutes / 60 * C["WAGE_PER_HR"]
-            mileage = miles * C["COST_PER_MILE"]
-            cost = labor + mileage
+            rc = run_cost(col["kind"], miles, minutes)
+            labor, mileage, cost = rc["labor"], rc["mileage"], rc["total"]
             reward = (served * C["MEAL_VALUE"] * boost * fresh
                       + surplus * C["MEAL_VALUE"] * 0.5)
 
@@ -284,6 +307,7 @@ def compute(supplier: dict, agencies: list[dict], pantries: list[dict],
                 "leg1": leg1, "leg2": leg2, "miles": miles,
                 "driveMin": drive_min, "minutes": minutes,
                 "labor": labor, "mileage": mileage, "cost": cost,
+                "fuel": rc["fuel"], "vehicle": rc["vehicle"], "crew": rc["crew"],
                 "served": served, "surplus": surplus, "boost": boost,
                 "freshness": fresh, "reward": reward, "net": reward - cost,
                 "arrivesAt": arrives.strftime("%H:%M"),
@@ -325,9 +349,8 @@ def compute(supplier: dict, agencies: list[dict], pantries: list[dict],
 
         meals_here = lbs / C["LBS_PER_MEAL"]
         fresh = freshness_factor(reported_at, expires_at, handover)
-        labor = minutes / 60 * C["WAGE_PER_HR"]
-        mileage = leg * C["COST_PER_MILE"]
-        cost = labor + mileage
+        rc = run_cost("dropoff", leg, minutes)
+        labor, mileage, cost = rc["labor"], rc["mileage"], rc["total"]
         reward = meals_here * C["MEAL_VALUE"] * C["DROPOFF_CREDIT"] * fresh
         net = reward - cost
 
@@ -349,6 +372,7 @@ def compute(supplier: dict, agencies: list[dict], pantries: list[dict],
             "leg1": leg, "leg2": 0.0, "miles": leg,
             "driveMin": drive_min, "minutes": minutes,
             "labor": labor, "mileage": mileage, "cost": cost,
+            "fuel": rc["fuel"], "vehicle": rc["vehicle"], "crew": rc["crew"],
             "served": meals_here, "surplus": 0.0, "boost": 1.0,
             "freshness": fresh, "reward": reward, "net": net,
             "arrivesAt": handover.strftime("%H:%M"),
