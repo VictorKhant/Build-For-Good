@@ -513,3 +513,186 @@ def serialisable(result: dict, top: int = 12) -> dict:
         "reportedAt": result["reportedAt"],
         "fmv": round(result["fmv"], 2),
     }
+
+
+# --------------------------------------------------------------------------
+# combining several accepted pickups into one run
+# --------------------------------------------------------------------------
+
+def combine_run(collector: dict, suppliers: list[dict], hotspots: list[dict],
+                now: datetime, ledger: "Ledger | None" = None,
+                cfg: dict | None = None, max_stops: int = 3) -> dict:
+    """One vehicle, several pickups, then drop-offs at the blocks that need it.
+
+    The pickup order is solved exactly by trying every permutation. With the
+    handful of jobs one van takes in an evening that is a few hundred routes,
+    so there is no heuristic here to defend -- it is the shortest order, not an
+    approximation of it.
+
+    Deliveries are then assigned greedily: the block with the best
+    need-weighted value per mile of detour goes first, up to what it can absorb
+    tonight, and on down until the van is empty or nothing is worth another
+    stop. Capacity is the vehicle's, so a van will leave food behind and say so.
+    """
+    from itertools import permutations
+
+    c = cfg or C
+    ledger = LEDGER if ledger is None else ledger
+    if not suppliers:
+        return {"feasible": False, "reason": "nothing accepted yet"}
+
+    kind = collector.get("kind", "agency")
+    cap = collector.get("capacityLbs", c["AGENCY_CAPACITY_LBS"])
+
+    # --- which pickups fit, in what order -------------------------------
+    loaded, left_behind, running = [], [], 0.0
+    for s in sorted(suppliers, key=lambda x: -x["report"]["lbs"]):
+        lbs = float(s["report"]["lbs"])
+        if running + lbs <= cap:
+            loaded.append(s)
+            running += lbs
+        else:
+            left_behind.append(s)
+    if not loaded:
+        return {"feasible": False,
+                "reason": f"every accepted pickup is larger than the "
+                          f"{cap:.0f} lb capacity of this vehicle"}
+
+    def leg(a, b):
+        return road_mi(a, b)
+
+    # The shortest order is not automatically a legal one: each donor has a
+    # window, and a route that reaches a loading dock after it closes is not a
+    # route. Feasible orders win outright; among them, the shortest. Only if
+    # nothing is fully feasible do we fall back to fewest missed windows, and
+    # say which ones.
+    def window_bounds(sup):
+        rep = sup["report"]
+        f = _clock(rep.get("pickupFrom") or rep.get("time", "17:00"), now)
+        t = _clock(rep.get("pickupTo") or "23:59", f)
+        if t <= f:
+            t += timedelta(days=1)
+        return f, t
+
+    pool = loaded if len(loaded) <= 6 else loaded[:6]
+    bounds = {s["id"]: window_bounds(s) for s in pool}
+
+    def evaluate(order):
+        pts = [pool[i] for i in order]
+        dist, t, missed = 0.0, now, []
+        prev = collector
+        for x in pts:
+            d = leg(prev, x)
+            dist += d
+            t = t + timedelta(minutes=d / c["AVG_SPEED_MPH"] * 60)
+            opens, closes = bounds[x["id"]]
+            if t > closes:
+                missed.append(x["name"])
+            t = max(t, opens) + timedelta(minutes=c["HANDLING_MIN"] / 2)
+            prev = x
+        return dist, missed
+
+    best = None
+    for order in permutations(range(len(pool))):
+        dist, missed = evaluate(order)
+        key = (len(missed), dist)
+        if best is None or key < best[0]:
+            best = (key, list(order), missed)
+    best_order, missed_windows = best[1], best[2]
+    pickups = [pool[i] for i in best_order]
+
+    # --- deliveries -----------------------------------------------------
+    meals = running / c["LBS_PER_MEAL"]
+    at = pickups[-1]
+    stops, remaining_meals = [], meals
+    open_blocks = [h for h in hotspots
+                   if h["need"] >= c["MIN_CANDIDATE_NEED"]
+                   and not ledger.is_closed(h, c)[0]]
+
+    while remaining_meals >= 1 and len(stops) < max_stops and open_blocks:
+        scored = []
+        for h in open_blocks:
+            room = ledger.remaining(h) - sum(x["meals"] for x in stops
+                                             if x["id"] == h["id"])
+            if room < 1:
+                continue
+            detour = leg(at, h)
+            boost = 1 + c["ACCESS_BOOST_MAX"] * (7 - min(h["accessDays"], 7)) / 7
+            served = min(remaining_meals, room)
+            scored.append((served * c["MEAL_VALUE"] * boost / max(detour, 0.1),
+                           served, detour, h))
+        if not scored:
+            break
+        scored.sort(key=lambda t: -t[0])
+        _, served, detour, h = scored[0]
+        stops.append({"id": h["id"], "location": h["location"], "area": h["area"],
+                      "lat": h["lat"], "lon": h["lon"],
+                      "meals": round(served, 1),
+                      "lbs": round(served * c["LBS_PER_MEAL"], 1),
+                      "need": h["need"], "accessDays": h["accessDays"],
+                      "detourMi": round(detour, 2)})
+        remaining_meals -= served
+        at = h
+        open_blocks = [x for x in open_blocks if x["id"] != h["id"]]
+
+    if not stops:
+        return {"feasible": False,
+                "reason": "every block within reach has been served tonight"}
+
+    # --- cost the whole thing ------------------------------------------
+    miles = leg(collector, pickups[0])
+    for a, b in zip(pickups, pickups[1:]):
+        miles += leg(a, b)
+    miles += leg(pickups[-1], {"lat": stops[0]["lat"], "lon": stops[0]["lon"]})
+    for a, b in zip(stops, stops[1:]):
+        miles += road_mi(a, b)
+    miles += road_mi(stops[-1], collector)          # home again
+
+    n_stops = len(pickups) + len(stops)
+    minutes = miles / c["AVG_SPEED_MPH"] * 60 + c["HANDLING_MIN"] * n_stops / 2
+    rc = run_cost(kind, miles, minutes, c)
+
+    served_total = sum(x["meals"] for x in stops)
+    reward = sum(x["meals"] * c["MEAL_VALUE"]
+                 * (1 + c["ACCESS_BOOST_MAX"] * (7 - min(x["accessDays"], 7)) / 7)
+                 for x in stops)
+    leftover = max(0.0, meals - served_total)
+    reward += leftover * c["MEAL_VALUE"] * c["DROPOFF_CREDIT"]
+
+    # what each pickup would have cost run on its own
+    solo = 0.0
+    for s in pickups:
+        one = leg(collector, s) * 2 + leg(s, {"lat": stops[0]["lat"], "lon": stops[0]["lon"]})
+        solo += run_cost(kind, one,
+                         one / c["AVG_SPEED_MPH"] * 60 + c["HANDLING_MIN"], c)["total"]
+
+    return {
+        "feasible": True,
+        "collector": {k: collector[k] for k in
+                      ("id", "name", "kind", "lat", "lon", "capacityLbs")
+                      if k in collector},
+        "pickups": [{"id": s["id"], "name": s["name"], "address": s.get("address", ""),
+                     "lat": s["lat"], "lon": s["lon"],
+                     "lbs": s["report"]["lbs"],
+                     "window": f"{s['report'].get('pickupFrom','')}"
+                               f"–{s['report'].get('pickupTo','')}",
+                     "items": s["report"].get("items", "")} for s in pickups],
+        "stops": stops,
+        "leftBehind": [{"id": s["id"], "name": s["name"],
+                        "lbs": s["report"]["lbs"]} for s in left_behind],
+        "missedWindows": missed_windows,
+        "loadedLbs": round(running, 1),
+        "capacityLbs": cap,
+        "meals": round(meals, 1),
+        "servedMeals": round(served_total, 1),
+        "leftoverMeals": round(leftover, 1),
+        "miles": round(miles, 2),
+        "minutes": round(minutes, 1),
+        "fuel": round(rc["fuel"], 2), "vehicle": round(rc["vehicle"], 2),
+        "labor": round(rc["labor"], 2), "crew": rc["crew"],
+        "cost": round(rc["total"], 2),
+        "reward": round(reward, 2),
+        "net": round(reward - rc["total"], 2),
+        "soloCost": round(solo, 2),
+        "saved": round(solo - rc["total"], 2),
+    }

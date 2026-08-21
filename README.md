@@ -46,6 +46,37 @@ cd bellyup
 
 ---
 
+## Three views, one board
+
+A role switcher in the header. What each role may see is enforced on the
+server, not just hidden in the UI — a business asking for `/api/board/business`
+is never sent a hotspot, and neither is the public view.
+
+**Business** — report surplus and watch it get taken. Sees other donors,
+agencies and pantries; **never a hotspot**. It can request a pickup, and that
+is all: a donor offers food, it does not assign anyone's van.
+
+**Agency** — pick who you are, see the reports offered to you with your own net
+value on each, and accept them. Accepting takes the job off every other
+agency's board. Then **plan the combined run**: one vehicle, several pickups in
+the shortest legal order, then drop-offs at the blocks that need it.
+
+**Find food** — enter an address, get the pantries near you, nearest open one
+first, with walking minutes. Pantry locations only.
+
+### Combining trips
+
+Pickup order is solved exactly — every permutation, so there is no heuristic to
+defend — and constrained by each donor's window: the shortest order is not
+automatically a legal one, and a route reaching a loading dock after it closes
+is not a route. Feasible orders win outright; among them, the shortest.
+
+Deliveries are then assigned greedily by need-weighted value per mile of
+detour, up to what each block can still absorb tonight.
+
+Three grocery pickups on one truck: **35.8 mi, $142.07 — against $305.94 run
+separately, saving $163.87.**
+
 ## The dispatch board
 
 **Left — tonight's reports.** Fourteen businesses reporting surplus, each with

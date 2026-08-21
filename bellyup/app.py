@@ -22,6 +22,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
 import agencies as ag_mod
+import claims as claims_mod
 import collection
 import demand as demand_mod
 import demo_data
@@ -181,6 +182,7 @@ def get_board():
         "agencies": b["agencies"],
         "pantries": b["pantries"],
         "constants": demo_data.CONSTANTS,
+        "claims": claims_mod.CLAIMS.all(),
         "history": b["history"],
         "tonight": dispatch.LEDGER.deliveries,
         "registered": registry.count(),
@@ -361,8 +363,9 @@ def get_ledger():
 
 @app.post("/api/board/ledger/reset")
 def reset_ledger():
-    """Clear tonight's confirmed deliveries. History is untouched."""
+    """Clear tonight's confirmed deliveries and acceptances. History stays."""
     dispatch.LEDGER.reset()
+    claims_mod.CLAIMS.reset()
     return {"reset": True, "tonight": []}
 
 
@@ -420,8 +423,192 @@ def reset_board():
     partners now, not demo state.
     """
     dispatch.LEDGER.reset()
+    claims_mod.CLAIMS.reset()
     _board.clear()
     return {"reset": True, "registered_kept": registry.count()}
+
+
+# --------------------------------------------------------------------------
+# ROLE-SCOPED VIEWS
+# --------------------------------------------------------------------------
+# What each role may see is a product decision, not a UI one, so it is
+# enforced here. A business never receives hotspot coordinates; the public
+# view never receives them either.
+
+def _status(sid: str) -> str:
+    if sid in {d["supplierId"] for d in dispatch.LEDGER.deliveries}:
+        return "delivered"
+    return "accepted" if claims_mod.CLAIMS.is_claimed(sid) else "pending"
+
+
+@app.get("/api/board/business")
+def business_view(lat: float | None = None, lon: float | None = None,
+                  max_km: float | None = None):
+    """What a donating business sees: itself, its neighbours, and who collects.
+
+    Deliberately no hotspots. A donor learns that a pickup was accepted and by
+    whom -- never which block the food goes to. Block-level locations are where
+    unsheltered people gather, and publishing them to every restaurant that
+    signs up would defeat the point of aggregating them.
+    """
+    b = board()
+    ags = [{k: a[k] for k in
+            ("id", "name", "program", "lat", "lon", "acceptsPrepared",
+             "mobileCapable", "address", "phone") if k in a}
+           for a in b["agencies"]]
+    pans = [{k: p[k] for k in
+             ("id", "name", "operator", "lat", "lon", "program", "schedule",
+              "acceptsPrepared", "dispatchable") if k in p}
+            for p in b["pantries"]]
+
+    sups = []
+    for s in b["suppliers"]:
+        row = {k: s[k] for k in ("id", "name", "type", "address", "lat", "lon",
+                                 "surplus", "registered")}
+        row["reporting"] = bool(s["report"])
+        row["status"] = _status(s["id"]) if s["report"] else None
+        if s["report"]:
+            row["lbs"] = s["report"]["lbs"]
+            holder = claims_mod.CLAIMS.holder(s["id"])
+            if holder:
+                row["acceptedBy"] = next(
+                    (a["name"] for a in b["agencies"] if a["id"] == holder), holder)
+        if lat is not None and lon is not None and max_km:
+            if needs_mod.haversine_km(lat, lon, s["lat"], s["lon"]) > max_km:
+                continue
+        sups.append(row)
+
+    return {"view": "business", "agencies": ags, "pantries": pans,
+            "suppliers": sups, "constants": demo_data.CONSTANTS,
+            "now": board_now().strftime("%H:%M"),
+            "date": board_now().strftime("%A, %b %-d %Y"),
+            "note": "Collection points only. Outreach locations are never shown "
+                    "to donors."}
+
+
+@app.get("/api/board/agency/{agency_id}/offers")
+def agency_offers(agency_id: str):
+    """Reports this agency could take, and the ones it already has."""
+    b = board()
+    col = next((c for c in dispatch.collectors(b["agencies"], b["pantries"])
+                if c["id"] == agency_id), None)
+    if col is None:
+        raise HTTPException(404, "no such collecting agency")
+
+    offers, mine = [], []
+    for s in b["suppliers"]:
+        if not s["report"]:
+            continue
+        st = _status(s["id"])
+        if st == "delivered":
+            continue
+        holder = claims_mod.CLAIMS.holder(s["id"])
+        if holder and holder != agency_id:
+            continue          # somebody else already took it
+
+        r = dispatch.compute(s, b["agencies"], b["pantries"], b["hotspots"],
+                             board_now())
+        best = next((p for p in r["pairs"] if p["collector"]["id"] == agency_id), None)
+        row = {
+            "supplier": {k: s[k] for k in ("id", "name", "type", "address",
+                                           "lat", "lon", "surplus")},
+            "report": s["report"],
+            "status": st,
+            "viable": best is not None,
+            "net": best["net"] if best else None,
+            "miles": best["miles"] if best else None,
+            "deferred": best.get("deferred") if best else None,
+            "deliversAt": best.get("deliversAt") if best else None,
+            "target": (best["hotspot"]["location"] if best and best["hotspot"]
+                       else None),
+            "whyNot": (None if best else
+                       (r["rejections"][0]["example"] if r["rejections"] else
+                        "no viable run")),
+        }
+        (mine if st == "accepted" else offers).append(row)
+
+    offers.sort(key=lambda o: (o["net"] is None, -(o["net"] or 0)))
+    return {"agency": {k: col[k] for k in ("id", "name", "kind", "lat", "lon",
+                                           "capacityLbs") if k in col},
+            "offers": offers, "accepted": mine,
+            "acceptedLbs": round(sum(m["report"]["lbs"] for m in mine), 1)}
+
+
+@app.post("/api/board/agency/{agency_id}/accept/{supplier_id}")
+def accept_offer(agency_id: str, supplier_id: str):
+    b = board()
+    if not any(c["id"] == agency_id
+               for c in dispatch.collectors(b["agencies"], b["pantries"])):
+        raise HTTPException(404, "no such collecting agency")
+    s = _find_supplier(supplier_id)
+    holder = claims_mod.CLAIMS.holder(supplier_id)
+    if holder and holder != agency_id:
+        raise HTTPException(409, f"{s['name']} has already been taken by "
+                                 f"another agency")
+    rec = claims_mod.CLAIMS.accept(supplier_id, agency_id, board_now())
+    return {"accepted": rec, "supplier": s["name"]}
+
+
+@app.post("/api/board/agency/{agency_id}/release/{supplier_id}")
+def release_offer(agency_id: str, supplier_id: str):
+    if claims_mod.CLAIMS.holder(supplier_id) != agency_id:
+        raise HTTPException(404, "this agency has not accepted that pickup")
+    claims_mod.CLAIMS.release(supplier_id)
+    return {"released": supplier_id}
+
+
+@app.post("/api/board/agency/{agency_id}/plan")
+def plan_combined_run(agency_id: str, supplier_ids: str | None = None):
+    """One vehicle, several accepted pickups, in the shortest order."""
+    b = board()
+    col = next((c for c in dispatch.collectors(b["agencies"], b["pantries"])
+                if c["id"] == agency_id), None)
+    if col is None:
+        raise HTTPException(404, "no such collecting agency")
+
+    wanted = ([x for x in supplier_ids.split(",") if x] if supplier_ids
+              else claims_mod.CLAIMS.for_agency(agency_id))
+    sups = [s for s in b["suppliers"] if s["id"] in wanted and s["report"]]
+    if not sups:
+        raise HTTPException(422, "no accepted pickups to plan")
+
+    return dispatch.combine_run(col, sups, b["hotspots"], board_now())
+
+
+@app.get("/api/board/pantries")
+def board_pantries(lat: float | None = None, lon: float | None = None,
+                   max_km: float = 5.0):
+    """Public view: where a person can get food. Pantries only, never hotspots."""
+    b = board()
+    out = []
+    for p in b["pantries"]:
+        row = {k: p[k] for k in ("id", "name", "operator", "lat", "lon",
+                                 "program", "schedule", "daysPerWeek",
+                                 "availableTonight", "whyNot")}
+        row["openTonight"] = bool(p["availableTonight"])
+        row["kind"] = "mobile pantry"
+        out.append(row)
+    for a in b["agencies"]:
+        if a.get("mobileCapable", True):
+            continue          # a depot is not somewhere to turn up for a meal
+        out.append({"id": a["id"], "name": a["name"], "operator": a.get("program", ""),
+                    "lat": a["lat"], "lon": a["lon"], "program": a.get("program", ""),
+                    "schedule": "", "daysPerWeek": None,
+                    "availableTonight": True, "openTonight": True,
+                    "whyNot": None, "kind": "walk-in pantry",
+                    "address": a.get("address", ""), "phone": a.get("phone", "")})
+
+    if lat is not None and lon is not None:
+        for r in out:
+            km = needs_mod.haversine_km(lat, lon, r["lat"], r["lon"])
+            r["distanceKm"] = round(km, 2)
+            r["walkMinutes"] = round(km / 5.0 * 60)
+        out = [r for r in out if r["distanceKm"] <= max_km]
+        out.sort(key=lambda r: (not r["openTonight"], r["distanceKm"]))
+
+    return {"view": "public", "count": len(out), "pantries": out,
+            "openNow": sum(1 for r in out if r["openTonight"]),
+            "note": "Pantry locations only. Outreach locations are never shown here."}
 
 
 @app.get("/api/config")
