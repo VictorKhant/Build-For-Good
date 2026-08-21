@@ -92,9 +92,25 @@ net    = reward − cost
 
 reward = meals served × $4.25 × accessBoost × freshness
        + overflow meals × $4.25 × 0.5
-cost   = (drive + 25 min handling) × $17.75/hr
-       + road miles × $0.76/mi
+cost   = fuel     miles ÷ mpg × $4.85/gal
+       + vehicle  miles × wear/mi
+       + crew     (drive + 25 min) × $17.75/hr × crew size
 ```
+
+**Operating cost has three parts, and they differ by vehicle.** The IRS
+mileage rate is a *blend* — it already bundles fuel with maintenance, tyres,
+insurance and depreciation — so adding a separate gas line on top would count
+fuel twice. It is split instead, calibrated so a box truck still totals the
+citable $0.76/mi:
+
+| | mpg | fuel | wear | crew | per mile |
+|---|---|---|---|---|---|
+| Box truck (2,000 lb) | 10 | $0.485 | $0.275 | 2 | **$0.76** = IRS rate |
+| Pantry van (150 lb) | 18 | $0.269 | $0.220 | 1 | $0.49 |
+
+A 2,000 lb truck run is not a one-person job, and it burns nearly twice the
+fuel. That is why a van beats it on small loads and loses on bulk: tonight,
+nine of the fourteen reports go to vans and the five largest go to trucks.
 
 **`accessBoost`** weights up blocks with poor scheduled food access:
 `1 + 0.5 × (7 − access days/week) / 7`. A block already served daily needs the
@@ -221,7 +237,8 @@ longer imported.
 |---|---|---|
 | Meal conversion | 1.2 lb | Feeding America |
 | Labour | $17.75/hr | City of San Diego minimum wage, eff. 2026-01-01 |
-| Vehicle | $0.76/mi | IRS standard mileage rate, eff. 2026-07-01 |
+| Vehicle | $0.76/mi blended | IRS standard mileage rate, eff. 2026-07-01 |
+| Fuel | $4.85/gal | California average, regular |
 | Meal value | $4.25 | Demo assumption |
 | FMV of donated food | $1.79/lb | Demo assumption, for the deduction estimate |
 

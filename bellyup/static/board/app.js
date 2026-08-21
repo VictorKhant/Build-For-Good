@@ -580,6 +580,10 @@ function renderResult(s, result) {
 
     <button class="btn-confirm" id="confirmBtn">✓ Confirm dispatch &amp; log receipt</button>
 
+    ${a.kind === "agency" ? `<div class="rb-note">🚚 <b>Box truck, ${b.crew}-person crew</b>
+      — a ${fmtInt(a.capacityLbs)} lb truck run is not a one-person job, and it burns
+      ${C.MPG.agency} mpg against a van's ${C.MPG.pantry}. It wins here because the load
+      is big enough to justify that.</div>` : ""}
     ${b.dropoff ? `<div class="rb-note">🏛 <b>Fixed drop-off — one leg, no distribution run</b>
       — ${a.name} has no collection vehicle, so this is scored on the
       ${b.miles.toFixed(1)} mi between the donor and the site alone. Stocking a
@@ -610,8 +614,11 @@ function renderResult(s, result) {
     <table class="rb-table">
       <tr><td>${isPantry ? "Site" : "HQ"} &rarr; pickup &rarr; hotspot</td><td>${b.leg1.toFixed(1)} + ${b.leg2.toFixed(1)} mi</td></tr>
       <tr><td>Drive + handling time</td><td>${fmtInt(b.driveMin)} + ${C.HANDLING_MIN} min</td></tr>
-      <tr><td>Personnel ($${C.WAGE_PER_HR}/hr)</td><td>${fmt$(b.labor)}</td></tr>
-      <tr><td>Vehicle ($${C.COST_PER_MILE}/mi)</td><td>${fmt$(b.mileage)}</td></tr>
+      <tr><td>Fuel (${b.miles.toFixed(1)} mi &divide; ${C.MPG[a.kind] || C.MPG.pantry} mpg
+        &times; $${C.FUEL_PRICE_PER_GAL}/gal)</td><td>${fmt$(b.fuel)}</td></tr>
+      <tr><td>Vehicle wear ($${(C.WEAR_PER_MILE[a.kind] || C.WEAR_PER_MILE.pantry).toFixed(3)}/mi)</td>
+        <td>${fmt$(b.vehicle)}</td></tr>
+      <tr><td>Crew (${b.crew} &times; $${C.WAGE_PER_HR}/hr)</td><td>${fmt$(b.labor)}</td></tr>
       <tr class="total"><td>Deployment cost</td><td>${fmt$(b.cost)}</td></tr>
     </table>
 
@@ -637,8 +644,12 @@ serving limit = ${C.MAX_DROPS_PER_NIGHT} deliveries/hotspot/night; served
 reward = min(collected meals, remaining need) × $${C.MEAL_VALUE}/meal × accessBoost
          + overflow meals × $${C.MEAL_VALUE} × 0.5 (pantry)
 accessBoost = 1 + ${C.ACCESS_BOOST_MAX} × (7 − access days/wk)/7
-cost = (drive + ${C.HANDLING_MIN} min) × $${C.WAGE_PER_HR}/hr        [SD min. wage 2026]
-       + road miles × $${C.COST_PER_MILE}/mi              [IRS rate 2026]
+cost = fuel    miles ÷ mpg × $${C.FUEL_PRICE_PER_GAL}/gal   [CA average]
+     + vehicle miles × wear/mi (maintenance, tyres,
+               insurance, depreciation)
+     + crew    (drive + ${C.HANDLING_MIN} min) × $${C.WAGE_PER_HR}/hr × crew  [SD min. wage 2026]
+  truck  10 mpg, $0.275/mi wear, 2 crew  → $0.76/mi   [= IRS rate 2026]
+  van    18 mpg, $0.220/mi wear, 1 crew  → $0.49/mi
 meals = lbs ÷ ${C.LBS_PER_MEAL}                        [Feeding America]
 distances: haversine × ${C.ROAD_FACTOR} at ${C.AVG_SPEED_MPH} mph city speed</div>
     </details>`;

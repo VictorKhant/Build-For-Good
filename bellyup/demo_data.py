@@ -61,6 +61,29 @@ CONSTANTS = {
     "LBS_PER_MEAL": 1.2,          # Feeding America conversion
     "WAGE_PER_HR": 17.75,         # City of San Diego minimum wage, eff. 2026-01-01
     "COST_PER_MILE": 0.76,        # IRS standard mileage rate, eff. 2026-07-01
+
+    # --- operating cost, broken into its three real parts ---------------
+    # The IRS rate above is a BLEND: it already bundles fuel with maintenance,
+    # tyres, insurance and depreciation. Adding a separate gas line on top of
+    # it would count fuel twice. So it is split instead, and the split is
+    # calibrated so a box truck still totals $0.76/mi -- the headline figure
+    # stays citable while the breakdown becomes real.
+    "FUEL_PRICE_PER_GAL": 4.85,   # California average, regular
+    "MPG": {                      # loaded, city driving
+        "agency": 10,             #   26 ft box truck
+        "pantry": 18,             #   pantry van / mobile unit
+        "dropoff": 18,            #   van-equivalent single trip
+    },
+    "WEAR_PER_MILE": {            # maintenance, tyres, insurance, depreciation
+        "agency": 0.275,          #   0.485 fuel + 0.275 wear = 0.76, the IRS rate
+        "pantry": 0.22,
+        "dropoff": 0.22,
+    },
+    "STAFF_PER_RUN": {            # a 2,000 lb truck run is not a one-person job
+        "agency": 2,
+        "pantry": 1,
+        "dropoff": 1,
+    },
     "MEAL_VALUE": 4.25,           # social value per meal served
     "FMV_PER_LB": 1.79,           # fair market value, for the deduction estimate
     "AVG_SPEED_MPH": 18,          # city driving average
@@ -419,8 +442,11 @@ def load_history(suppliers=None, agencies=None, pantries=None,
             boost = 1 + C["ACCESS_BOOST_MAX"] * (7 - min(h["accessDays"], 7)) / 7
             reward = served * C["MEAL_VALUE"] * boost + (meals - served) * C["MEAL_VALUE"] * 0.5
             miles = road_mi(col, b) + road_mi(b, h)
-            cost = ((miles / C["AVG_SPEED_MPH"] * 60 + C["HANDLING_MIN"]) / 60
-                    * C["WAGE_PER_HR"] + miles * C["COST_PER_MILE"])
+            minutes = miles / C["AVG_SPEED_MPH"] * 60 + C["HANDLING_MIN"]
+            # same three-part costing the live engine uses, so a receipt from
+            # last Tuesday is comparable with one from tonight
+            import dispatch as _d
+            cost = _d.run_cost(col["kind"], miles, minutes, C)["total"]
             out.append({
                 "receipt": f"BU-{day:%Y%m%d}-{len(out):03d}",
                 "date": day.isoformat(),
