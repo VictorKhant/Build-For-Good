@@ -10,6 +10,8 @@ import sys
 
 from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import RedirectResponse
+from fastapi.staticfiles import StaticFiles
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 if str(PROJECT_ROOT) not in sys.path:
@@ -33,7 +35,12 @@ PUBLIC_TABLES = {
     "standard_agency_summary", "standard_hotspot_summary",
     "simulation_baseline_allocations", "simulation_optimized_allocations",
     "simulation_agency_summary", "simulation_hotspot_summary",
+    "simulation_vehicle_routes", "simulation_vehicle_route_stops",
 }
+
+@app.get("/")
+def root() -> RedirectResponse:
+    return RedirectResponse("/ui/")
 
 @app.get("/health")
 def health() -> dict:
@@ -75,6 +82,13 @@ def optimize(mode: str) -> dict:
     completed = subprocess.run(command, cwd=PROJECT_ROOT, capture_output=True, text=True)
     if completed.returncode:
         raise HTTPException(status_code=500, detail=completed.stderr or completed.stdout)
+    if mode == "simulation":
+        route_run = subprocess.run(
+            [sys.executable, str(PROJECT_ROOT / "optim" / "build_vehicle_routes.py")],
+            cwd=PROJECT_ROOT, capture_output=True, text=True,
+        )
+        if route_run.returncode:
+            raise HTTPException(status_code=500, detail=route_run.stderr or route_run.stdout)
     output = PROJECT_ROOT / "optim" / "output"
     if mode == "simulation":
         output /= "simulation"
@@ -90,3 +104,19 @@ def results(mode: str, method: str, limit: int = Query(500, ge=1, le=5000)) -> d
         raise HTTPException(status_code=404, detail="Run optimization first")
     frame = read_table(table).head(limit)
     return {"mode": mode, "method": method, "total": len(read_table(table)), "rows": frame.where(frame.notna(), None).to_dict("records")}
+
+@app.get("/routes/simulation")
+def simulation_routes() -> dict:
+    if "simulation_vehicle_routes" not in table_names():
+        raise HTTPException(status_code=404, detail="Run simulation optimization first")
+    routes = read_table("simulation_vehicle_routes")
+    stops = read_table("simulation_vehicle_route_stops")
+    rows = []
+    for route in routes.to_dict("records"):
+        geometry = route.pop("geometry_geojson", None)
+        route["geometry"] = json.loads(geometry) if geometry else None
+        route["stops"] = stops[stops.route_id.eq(route["route_id"])].sort_values("stop_sequence").where(lambda x: x.notna(), None).to_dict("records")
+        rows.append(route)
+    return {"total": len(rows), "routes": rows}
+
+app.mount("/ui", StaticFiles(directory=PROJECT_ROOT / "ui", html=True), name="ui")

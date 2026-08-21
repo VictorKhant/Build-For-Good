@@ -1,0 +1,81 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>BellyUp — Surplus Dispatch</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>🍲</text></svg>">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+
+<header class="topbar">
+  <div class="brand">
+    <div class="brand-mark">Bu</div>
+    <div>
+      <div class="brand-name">BellyUp</div>
+      <div class="brand-tag">surplus food &rarr; the streets that need it &middot; San Diego</div>
+    </div>
+  </div>
+  <div class="topstats" id="topstats"></div>
+  <div class="topdate" id="topdate"></div>
+</header>
+
+<main class="layout">
+
+  <!-- ======================= left: voluntary report feed ================ -->
+  <aside class="feed">
+    <div class="feed-head">
+      <h2>Tonight&rsquo;s surplus reports</h2>
+      <p class="feed-sub">Voluntary end-of-day reports from food businesses.
+        Click one to inspect its optimized network flow.</p>
+      <button class="run-network" id="runNetwork">Run global simulation</button>
+      <div class="api-status" id="apiStatus">Connecting to BellyUp API…</div>
+    </div>
+    <div class="feed-list" id="feed"></div>
+    <div class="feed-foot">
+      <span class="dot dot-quiet"></span> 17 more partners on the map reported no surplus tonight
+    </div>
+  </aside>
+
+  <!-- ======================= center: live map ========================== -->
+  <section class="map-wrap">
+    <div id="map"></div>
+
+    <div class="map-legend">
+      <div class="lg-row"><span class="lg-hotspot"></span> Hotspot block &middot; size = need (person&#8209;equivalents)</div>
+      <div class="lg-row"><span class="lg-supplier"></span> Supplier reporting surplus</div>
+      <div class="lg-row"><span class="lg-supplier lg-quiet"></span> Supplier, quiet tonight</div>
+      <div class="lg-row"><span class="lg-agency"></span> Agency HQ (collects &amp; distributes)</div>
+      <div class="lg-row"><span class="lg-pantry"></span> Mobile pantry &middot; unit available tonight</div>
+      <div class="lg-row"><span class="lg-pantry lg-pantry-idle"></span> Mobile pantry &middot; no unit tonight</div>
+    </div>
+
+    <div class="calc-overlay" id="calcOverlay">
+      <div class="calc-title" id="calcTitle">TRIANGULATING</div>
+      <div class="calc-line" id="calcLine">&nbsp;</div>
+      <div class="calc-count"><span id="calcCount">0</span> pair evaluations</div>
+    </div>
+  </section>
+
+  <!-- ======================= right: dispatch result ===================== -->
+  <aside class="result" id="resultPanel">
+    <div class="result-empty" id="resultEmpty">
+      <div class="re-icon">&#9678;</div>
+      <p>Run the capacity-constrained global optimizer to display the complete
+        <strong>agency&nbsp;&rarr;&nbsp;supplier&nbsp;&rarr;&nbsp;hotspot</strong> network.</p>
+      <p class="re-model">Stage 1: maximize service · Stage 2: minimize meal-miles</p>
+    </div>
+    <div class="result-body" id="resultBody" hidden></div>
+  </aside>
+
+</main>
+
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script src="api-app.js"></script>
+</body>
+</html>
