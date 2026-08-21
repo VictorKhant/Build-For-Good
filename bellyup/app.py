@@ -741,6 +741,14 @@ def accept_run(agency_id: str, supplier_ids: str = ""):
             "tonight": dispatch.LEDGER.deliveries}
 
 
+@app.get("/api/board/hotspots/forecast")
+def hotspots_forecast(months: float = 6.0):
+    """Only the blocks where Gi*'s cluster verdict actually changes between
+    today and the projection -- an overlay on the current map, not a second
+    one. See demo_data.forecast_changes()."""
+    return {"months": months, "changes": demo_data.forecast_changes(months)}
+
+
 @app.get("/api/board/pantries")
 def board_pantries(lat: float | None = None, lon: float | None = None,
                    max_km: float = 5.0):

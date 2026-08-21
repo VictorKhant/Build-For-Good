@@ -215,6 +215,115 @@ nine of the fourteen reports go to vans and the five largest go to trucks.
 `1 + 0.5 × (7 − access days/week) / 7`. A block already served daily needs the
 next van less than one served twice a month.
 
+**[Getis-Ord Gi\*](GI_STAR_SPEC.md) is a map and forecast layer, deliberately
+not wired into `reward`.** It answers a real question — is this block's need
+a genuine spatial cluster, or an isolated spike, the same drive with a
+different reach — but the matching algorithm that actually decides who
+collects what stays exactly what shipped on `main`, unmodified. Gi\* and its
+trend-based forecast (below) show up on the map and in the "show predicted
+changes" overlay; they do not change a single dispatch decision.
+
+Hotspots are scored over the **full 382-block grid**, before the map's
+`need ≥ 0.5` display cut — scoring only the survivors would condition the
+statistic on its own outcome and bias every z-score upward. Reference numbers,
+computed on `dataset/hotspots.csv`:
+
+```
+382 blocks | mean need 2.58 | sd 5.75
+161 blocks pass need ≥ 1
+ 54 significant clusters (z > 1.96)
+114 of the 161 are isolated, not clustered
+
+top clusters:            16th St & K St     z=7.58  need  4.5
+                          16th St & J St     z=7.27  need 13.3
+                          16th St & Imperial z=6.98  need  5.9
+
+high need, not significant: Park Bl & J St  z=1.73  need 23.2
+                             03rd Av & A St  z=1.18  need 21.4
+```
+
+16th & K St has a fifth of Park Bl & J St's counted need and five times the
+significance, because it sits inside a dense band rather than standing alone.
+
+**The neighbour radius is a choice** (250 m — downtown blocks run ~90×60 m, so
+this reaches the immediate ring, typically 8–16 blocks), and the honest way to
+say so is to show what changes when it moves:
+
+| radius | significant clusters | avg neighbours/block |
+|---|---|---|
+| 150 m | 32 |  5.2 |
+| 250 m | 54 | 13.3 |
+| 400 m | 59 | 31.8 |
+| 600 m | 81 | 65.0 |
+
+The count keeps climbing at wider radii rather than washing out — a bigger
+neighbourhood pulls in more of downtown's genuinely-elevated blocks before it
+dilutes any one of them enough to matter. 250 m is used because it matches the
+grid's own block scale (§"Two radii" above), not because it gives the most
+flattering count.
+
+Gi\* touches neither **eligibility** nor **preference** in the matching
+algorithm: the candidate filter stays `need ≥ MIN_CANDIDATE_NEED`, and the
+reward formula above is `main`'s, untouched. Park Bl & J St has 23.2 real
+person-equivalents and is not a statistical cluster (z = 1.73) — refusing to
+feed 23 counted people because the block sits alone would be the wrong
+answer, and eligibility is exactly the place that mistake would show up if
+Gi\* were ever wired into it.
+
+### Emerging, established, cooling — the one part that IS predictive
+
+Gi\* is a snapshot statistic. It has no time dimension, so no reading of it
+answers *where need is headed* — only *is this pattern real right now*
+(GI_STAR_SPEC.md §5 says this explicitly: "not fair to say: predicts where
+need will be"). Getting an actual forecast out of the data means bringing in
+a second, independent signal that Gi\* cannot supply: change over time.
+
+`dataset/BlockLevel_Counts_Panel261.csv` has that — 261 blocks, 12 real count
+dates, 2018 to 2025. For each block, `need_trend` is the OLS slope of weighted
+need (`individuals + 1.75×tents_structures + 2.03×vehicles`, the same
+composite `need` already uses — see "Data rules" above) over its last 5
+observations, in persons/year. This is the exact method the build spec
+already documents for trend (§3.1); it was reintroduced here for hotspots.csv
+after being dropped along with the earlier, now-superseded `/roles` view.
+
+Crossed with Gi\*, every significant cluster gets one of three reads, split at
+the top and bottom quartile of trend **among clusters** (not a picked
+threshold — whatever the data currently says the fastest-moving quarter is):
+
+| | meaning | today's example |
+|---|---|---|
+| **emerging** | growing fastest quarter of clusters — becoming a bigger cluster | 15th St & Imperial Av: need 28.4, z=3.8, **+3.1/yr** |
+| **established** | a real cluster, not sharply moving either way | most significant clusters |
+| **cooling** | declining fastest quarter of clusters — fading from a peak | 17th St & K St: need 74.8 (the single highest-need block downtown), z=5.9, **−34.7/yr** |
+
+That last pair is the actual finding, not a hypothetical: the block with the
+**most** counted need downtown is also declining the fastest of any
+significant cluster, while a block a third its size is the fastest-growing
+cluster in the dataset. Only "emerging" and "cooling" are ever fair to call
+predictive — they extrapolate a real, measured trajectory. "Established"
+and Gi\* on its own are not; they describe now.
+
+**A second opinion from a real model, not just a 5-point slope.** A block's
+own trend is 5 sparse points; `bellyup/area_forecast.py` fits an actual
+regression — linear trend + month-of-year seasonal dummies + a control for
+a known one-off program effect (`fellowship_month`) — on each neighbourhood's
+full monthly history back to 2017 (up to 108 months), by ordinary least
+squares. That is enough data to ask for a p-value, and the rule is strict:
+**an area's trend is only ever shown when it clears p < 0.05.** Below that,
+nothing is shown — not a caveated maybe, nothing, because a block-level
+pattern too thin to call is still clutter even with a hedge attached.
+
+Real result: East Village and Gaslamp do **not** clear that bar — despite
+containing most of the significant block-level clusters above, including
+17th & K St's sharp decline, neither neighbourhood has a statistically real
+month-over-month trend once seasonality and the fellowship effect are
+controlled for. So a block-level swing there is reported as exactly that: a
+block-level pattern, not evidence the whole neighbourhood is moving. City
+Center, Columbia, Cortez, Marina and Outside Perimeter *do* clear p < 0.05,
+so a handful of emerging/cooling blocks there get one extra line: whether
+their own neighbourhood is trending the same way (reinforcing) or the
+opposite way (worth a second look before trusting the block's own read).
+
 **`freshness`** decays with the share of the food's life spent by the time it
 reaches a person, floored at 0.35. This is why a four-hour hotel tray behaves
 differently from bakery goods with two days on them — without hard-coding a
@@ -377,6 +486,20 @@ Distances are straight-line × 1.3 at 18 mph — fine for triage, not dispatch.
   and cannot anchor a cost model, so it is excluded.
 - Registrations and reports persist to CSV, not a database. Fine for a demo,
   not concurrent-safe under real load.
+- **Gi\* cluster significance is not the same claim as "validated need."** It
+  tests spatial pattern on one snapshot, not whether the underlying count is
+  accurate, and it does not predict where need will be next. The DSDP panel
+  behind it is 12 count dates, so everything downstream inherits that
+  thinness. And "unlikely under spatial randomness" is a weaker question than
+  "unlikely given how a city actually works" — downtown need is shaped by
+  shelters, transit and enforcement, not scattered at random; that is the null
+  Gi\* tests against anyway. See [GI_STAR_SPEC.md](GI_STAR_SPEC.md) §5.
+- **The emerging/cooling trend is 5 unevenly-spaced points, not a clean
+  time series.** Two of the panel's 12 dates sit five weeks apart
+  (Jan/Mar 2022) while the rest are roughly a year apart, so an OLS slope
+  over the last 5 can be pulled around by whichever count happens to land in
+  that gap. It is a real signal, not noise dressed up — but "trend" here
+  means "this block's own last five surveys," not a stable multi-year rate.
 
 ---
 
