@@ -121,9 +121,14 @@ that is exactly what it is. Stocking a pantry is worth less than feeding a
 counted block tonight, so a drop-off only outranks a routed run when that run
 genuinely was not worth making. Tonight, routed wins all 14 reports.
 
-A drop-off still has to pay for itself. If the site is far enough that the run
-costs more than the food is worth, it is refused with `DROPOFF_NOT_WORTH_IT` —
-moving food to a pantry you cannot afford to reach is not a rescue.
+**Every run has to pay for itself**, routed or drop-off. Sorting by net value
+descending is not a viability test — without an explicit check the best of a bad
+set still wins, and a 2 lb donation gets a *−$4.39* "recommendation". A pair
+whose reward does not cover its fuel and staff time is rejected
+(`NET_NEGATIVE`, or `DROPOFF_NOT_WORTH_IT` for a site you cannot afford to
+reach), and when nothing survives the board says **"Nothing here is worth the
+run"** and shows why each option failed. Refusing is the correct answer, not a
+failure state.
 
 **Serving limits** come out of the ledger, and they answer two different
 questions. A block only holds so many people, so once its need is met further

@@ -944,3 +944,17 @@ body.ledger-open { overflow: hidden; }
   background: var(--surface); border: 2px solid var(--c-agency);
 }
 .pn-dropoff .pn-badge { background: color-mix(in srgb, var(--c-agency) 16%, transparent); }
+
+/* refusing a run is a real answer, and should look like one rather than an error */
+.rb-refused { color: var(--bad); }
+.refused-box {
+  margin: 12px 0 4px; padding: 12px 14px; border-radius: 10px;
+  background: color-mix(in srgb, var(--bad) 8%, transparent);
+  border: 1px solid color-mix(in srgb, var(--bad) 32%, transparent);
+}
+.rf-title { font-family: var(--font-brand); font-size: 14px; font-weight: 600; color: var(--ink); }
+.rf-sub { font-size: 12px; color: var(--ink-2); line-height: 1.5; margin-top: 5px; }
+
+/* Rejection counts run to three digits (×966), which overflowed the 16px
+   rank column Oscar sized for "1." — let it size to content instead. */
+.alt-row .alt-rank { width: auto; min-width: 16px; flex: none; white-space: nowrap; }
