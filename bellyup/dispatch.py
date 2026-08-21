@@ -268,6 +268,15 @@ def compute(supplier: dict, agencies: list[dict], pantries: list[dict],
             reward = (served * C["MEAL_VALUE"] * boost * fresh
                       + surplus * C["MEAL_VALUE"] * 0.5)
 
+            # A run has to pay for itself. Sorting by net descending is not a
+            # viability test -- without this the best of a bad set still wins,
+            # and a 2 lb donation gets a -$4.39 "recommendation".
+            if reward - cost <= 0:
+                note("NET_NEGATIVE",
+                     f"{col['name']} to {h['location']} costs ${cost:.2f} to "
+                     f"deliver ${reward:.2f} of food — not worth the run.")
+                continue
+
             pairs.append({
                 "collector": col, "hotspot": h,
                 "remaining": round(room, 1),

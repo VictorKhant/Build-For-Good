@@ -343,6 +343,11 @@ async function selectReport(s, opts = {}) {
 }
 
 function runTriangulation(s, result, token) {
+  /* No viable pair is a real answer, not a failure. Refusing a run that costs
+     more than the food is worth is the point -- so say so plainly rather than
+     animating toward a recommendation that does not exist. */
+  if (!result.pairs.length) return renderRefusal(s, result);
+
   const best = result.pairs[0];
   const live = () => token === animToken;
 
@@ -455,6 +460,36 @@ function runTriangulation(s, result, token) {
     renderResult(s, result);
     setTimeout(() => { if (live()) $("calcOverlay").classList.remove("show"); }, 2600);
   }, SCAN_MS + SHORTLIST_MS);
+}
+
+function renderRefusal(s, result) {
+  clearFx();
+  $("calcOverlay").classList.remove("show");
+  $("resultEmpty").style.display = "none";
+
+  const top = result.rejections.slice(0, 5);
+  const meals = fmtInt(result.meals);
+  $("resultBody").innerHTML = `
+    <div class="rb-eyebrow rb-refused">No viable dispatch</div>
+    <div class="rb-source">from <b>${s.name}</b> &middot; ${fmtInt(s.report.lbs)} lbs
+      ${s.surplus} &middot; ${meals} meals &middot; reported ${result.reportedAt}
+      <br>pickup window ${result.window.from}&ndash;${result.window.to}
+      &middot; good until ${result.expiresAt}</div>
+
+    <div class="refused-box">
+      <div class="rf-title">Nothing here is worth the run.</div>
+      <div class="rf-sub">Every collector and every open block was checked, and
+        none of them covers its own fuel and staff time for ${meals} meals.
+        Holding this for a larger pickup moves more food per mile than driving
+        for it now.</div>
+    </div>
+
+    <div class="rb-h">Why each option failed
+      (${fmtInt(result.evaluated + result.rejections.reduce((t, r) => t + r.count, 0))} evaluated)</div>
+    ${top.map(r => `<div class="alt-row">
+      <span class="alt-rank">&times;${r.count}</span>
+      <span class="alt-pair">${r.example}</span></div>`).join("")}`;
+  $("resultBody").hidden = false;
 }
 
 /* ---------------------------------------------------------- result panel */
