@@ -943,3 +943,4 @@ body.ledger-open { overflow: hidden; }
   width: 11px; height: 11px; border-radius: 3px; display: inline-block;
   background: var(--surface); border: 2px solid var(--c-agency);
 }
+.pn-dropoff .pn-badge { background: color-mix(in srgb, var(--c-agency) 16%, transparent); }

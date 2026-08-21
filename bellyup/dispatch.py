@@ -92,10 +92,15 @@ class Ledger:
 
     # -- serving limits -------------------------------------------------
     def served_meals(self, hotspot_id: str) -> float:
+        if hotspot_id is None:
+            return 0.0
         return sum(d["servedMeals"] for d in self.deliveries
                    if d["hotspotId"] == hotspot_id)
 
     def drops(self, hotspot_id: str) -> int:
+        # a drop-off has no hotspot, so it must never count against a block
+        if hotspot_id is None:
+            return 0
         return sum(1 for d in self.deliveries if d["hotspotId"] == hotspot_id)
 
     def remaining(self, hotspot: dict) -> float:
@@ -113,7 +118,10 @@ class Ledger:
 
     # -- booking --------------------------------------------------------
     def confirm(self, supplier: dict, pair: dict, cfg: dict, when) -> dict:
+        """Book a run. A drop-off has no hotspot, so it consumes no block's
+        nightly capacity -- it stocks a pantry instead."""
         n = len(self.deliveries) + 1
+        hs = pair.get("hotspot")
         rec = {
             "receipt": f"BU-{cfg['DEMO_DATE'].replace('-', '')}-T{n:02d}",
             "date": cfg["DEMO_DATE"],
@@ -125,8 +133,9 @@ class Ledger:
             "surplusMeals": round(pair["surplus"]),
             "collector": pair["collector"]["name"],
             "kind": pair["collector"]["kind"],
-            "hotspotId": pair["hotspot"]["id"],
-            "hotspot": pair["hotspot"]["location"],
+            "hotspotId": hs["id"] if hs else None,
+            "hotspot": hs["location"] if hs else pair["collector"]["name"],
+            "dropoff": hs is None,
             "fmv": round(supplier["report"]["lbs"] * cfg["FMV_PER_LB"], 2),
             "net": round(pair["net"], 2),
         }
@@ -182,6 +191,7 @@ def compute(supplier: dict, agencies: list[dict], pantries: list[dict],
 
     candidates = [h for h in hotspots if h["need"] >= C["MIN_CANDIDATE_NEED"]]
     all_collectors = collectors(agencies, pantries)
+    dropoffs = [a for a in agencies if not a.get("mobileCapable", True)]
 
     pairs: list[dict] = []
     rejected: dict[str, dict] = {}
@@ -272,12 +282,80 @@ def compute(supplier: dict, agencies: list[dict], pantries: list[dict],
                 "hoursToPeople": round((arrives - reported_at).total_seconds() / 3600, 1),
             })
 
+    # ---------------------------------------------------------------- drop-offs
+    # A fixed-site agency has no vehicle and runs no route: food is brought to
+    # it and people come to the pantry. So it is ONE leg, restaurant to agency,
+    # and there is no hotspot to serve tonight.
+    #
+    # It is credited at DROPOFF_CREDIT, the same rate Oscar's model already
+    # gives overflow meals that "ride along to the pantry network" -- because
+    # that is exactly what this is. Stocking a pantry is worth less than
+    # feeding a counted block tonight, so a drop-off only outranks a hotspot
+    # run when that run genuinely was not worth making.
+    for site in dropoffs:
+        if prepared and not site.get("acceptsPrepared"):
+            note("NO_PREPARED_HANDLING",
+                 f"{site['name']} is not set up to accept prepared food.")
+            continue
+
+        leg = road_mi(supplier, site)
+        drive_min = leg / C["AVG_SPEED_MPH"] * 60
+        minutes = drive_min + C["HANDLING_MIN"]
+        arrive = now + timedelta(minutes=drive_min)
+        if arrive > win_to:
+            note("PICKUP_WINDOW_MISSED",
+                 f"{site['name']} could not take this before the "
+                 f"{win_to:%H:%M} cutoff.")
+            continue
+        handover = max(arrive, win_from) + timedelta(minutes=C["HANDLING_MIN"] / 2)
+        if (expires_at - handover).total_seconds() / 60 < C["SAFETY_MARGIN_MIN"]:
+            note("EXPIRES_BEFORE_SERVED",
+                 f"Would reach {site['name']} at {handover:%H:%M}, too close to "
+                 f"the {expires_at:%H:%M} expiry.")
+            continue
+
+        meals_here = lbs / C["LBS_PER_MEAL"]
+        fresh = freshness_factor(reported_at, expires_at, handover)
+        labor = minutes / 60 * C["WAGE_PER_HR"]
+        mileage = leg * C["COST_PER_MILE"]
+        cost = labor + mileage
+        reward = meals_here * C["MEAL_VALUE"] * C["DROPOFF_CREDIT"] * fresh
+        net = reward - cost
+
+        # A drop-off has to pay for itself too. Moving food to a pantry that
+        # costs more to reach than the food is worth is not a rescue.
+        if net <= 0:
+            note("DROPOFF_NOT_WORTH_IT",
+                 f"{site['name']} is {leg:.1f} mi away — the run costs "
+                 f"${cost:.2f} to hand over ${reward:.2f} of food.")
+            continue
+
+        pairs.append({
+            "collector": {**site, "kind": "dropoff",
+                          "capacityLbs": lbs},
+            "hotspot": None,
+            "dropoff": True,
+            "remaining": None,
+            "collectedLbs": lbs, "uncollectedLbs": 0.0,
+            "leg1": leg, "leg2": 0.0, "miles": leg,
+            "driveMin": drive_min, "minutes": minutes,
+            "labor": labor, "mileage": mileage, "cost": cost,
+            "served": meals_here, "surplus": 0.0, "boost": 1.0,
+            "freshness": fresh, "reward": reward, "net": net,
+            "arrivesAt": handover.strftime("%H:%M"),
+            "pickupAt": max(arrive, win_from).strftime("%H:%M"),
+            "hoursToPeople": round((handover - reported_at).total_seconds() / 3600, 1),
+        })
+
     pairs.sort(key=lambda p: -p["net"])
 
     return {
         "meals": meals, "prepared": prepared,
         "eligible": [c for c in all_collectors if not prepared or c["acceptsPrepared"]],
         "collectorCount": len(all_collectors),
+        "dropoffCount": len(dropoffs),
+        "routedCount": sum(1 for p in pairs if not p.get("dropoff")),
+        "dropoffOptions": sum(1 for p in pairs if p.get("dropoff")),
         "candidateCount": len(candidates),
         "pairs": pairs,
         "evaluated": len(pairs),
@@ -301,7 +379,8 @@ def serialisable(result: dict, top: int = 12) -> dict:
         base = {k: (round(v, 4) if isinstance(v, float) else v)
                 for k, v in p.items() if k not in ("collector", "hotspot")}
         base["collector"] = {k: p["collector"][k] for k in COL_KEYS if k in p["collector"]}
-        base["hotspot"] = {k: p["hotspot"][k] for k in HS_KEYS}
+        base["hotspot"] = ({k: p["hotspot"][k] for k in HS_KEYS}
+                           if p["hotspot"] else None)
         return base
 
     return {
@@ -311,6 +390,9 @@ def serialisable(result: dict, top: int = 12) -> dict:
         "eligibleCount": len(result["eligible"]),
         "collectorCount": result["collectorCount"],
         "candidateCount": result["candidateCount"],
+        "dropoffCount": result["dropoffCount"],
+        "routedCount": result["routedCount"],
+        "dropoffOptions": result["dropoffOptions"],
         "evaluated": result["evaluated"],
         "pairs": [one(p) for p in result["pairs"][:top]],
         "rejections": result["rejections"],

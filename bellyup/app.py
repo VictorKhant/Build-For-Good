@@ -324,9 +324,23 @@ def confirm_dispatch(supplier_id: str):
     top = result["pairs"][0]
     rec = dispatch.LEDGER.confirm(s, top, demo_data.CONSTANTS, board_now())
     hs = top["hotspot"]
+
+    if hs is None:
+        # a drop-off: no block was served, so no block's limit moved
+        site = top["collector"]
+        return {
+            "receipt": rec,
+            "dropoff": True,
+            "hotspot": {"id": None, "location": site["name"], "need": None,
+                        "remaining": None, "drops": 0,
+                        "closed": False, "closedWhy": ""},
+            "tonight": dispatch.LEDGER.deliveries,
+        }
+
     closed, why = dispatch.LEDGER.is_closed(hs, demo_data.CONSTANTS)
     return {
         "receipt": rec,
+        "dropoff": False,
         "hotspot": {"id": hs["id"], "location": hs["location"],
                     "need": hs["need"],
                     "remaining": round(dispatch.LEDGER.remaining(hs), 1),
