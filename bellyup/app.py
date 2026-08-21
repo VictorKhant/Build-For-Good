@@ -107,6 +107,12 @@ def board():
         _board["suppliers"] = demo_data.load_suppliers()
         _board["agencies"] = demo_data.load_agencies()
         _board["pantries"] = demo_data.load_pantries()
+        # Who each report is addressed to. Computed once: a report is matched
+        # to exactly one collector, and only that collector may act on it.
+        _board["targets"] = dispatch.assign_targets(
+            [x for x in _board["suppliers"] if x.get("report")],
+            _board["agencies"], _board["pantries"], _board["hotspots"],
+            board_now())
         _board["history"] = demo_data.load_history(
             _board["suppliers"], _board["agencies"],
             _board["pantries"], _board["hotspots"])
@@ -122,17 +128,48 @@ def _find_supplier(sid: str) -> dict:
     return s
 
 
+def _lifecycle(s: dict, b: dict) -> dict:
+    """The request-lifecycle fields for one supplier row.
+
+    Shared because /api/board and /api/board/business both need them and drifted
+    once already: the board omitted `status`, the UI read `label[s.status]`, and
+    the whole right-hand panel died on a supplier the business view would have
+    described fine. Anything a donor may see about its own request belongs here,
+    and nothing hotspot-shaped ever does.
+    """
+    if not s.get("report"):
+        return {"reporting": False, "status": None}
+    out = {"reporting": True, "status": _status(s["id"]),
+           "lbs": s["report"]["lbs"]}
+    tgt = b["targets"].get(s["id"])
+    out["matchedTo"] = _target_name(tgt)
+    out["matchedToId"] = tgt
+    req = claims_mod.REQUESTS.get(s["id"])
+    if req:
+        out["requestedAt"] = req["requested_at"]
+        out["declinedBy"] = [_target_name(x) for x in req["declined_by"]]
+        out["openToAll"] = req["open_to_all"]
+        out["allowFallback"] = req.get("allow_fallback", True)
+    out["windowClosed"] = _window_closed(s["report"], board_now())
+    holder = claims_mod.CLAIMS.holder(s["id"])
+    if holder:
+        out["acceptedBy"] = _target_name(holder)
+    return out
+
+
 @app.get("/api/board")
 def get_board():
     """Everything the front end needs to draw the map and the feed."""
     b = board()
     return {
         "hotspots": b["hotspots"],
-        "suppliers": b["suppliers"],
+        "suppliers": [{**x, **_lifecycle(x, b)} for x in b["suppliers"]],
         "agencies": b["agencies"],
         "pantries": b["pantries"],
         "constants": demo_data.CONSTANTS,
         "claims": claims_mod.CLAIMS.all(),
+        "requests": claims_mod.REQUESTS.all(),
+        "targets": b["targets"],
         "history": b["history"],
         "tonight": dispatch.LEDGER.deliveries,
         "registered": registry.count(),
@@ -316,6 +353,7 @@ def reset_ledger():
     """Clear tonight's confirmed deliveries and acceptances. History stays."""
     dispatch.LEDGER.reset()
     claims_mod.CLAIMS.reset()
+    claims_mod.REQUESTS.reset()
     return {"reset": True, "tonight": []}
 
 
@@ -374,6 +412,7 @@ def reset_board():
     """
     dispatch.LEDGER.reset()
     claims_mod.CLAIMS.reset()
+    claims_mod.REQUESTS.reset()
     _board.clear()
     return {"reset": True, "registered_kept": registry.count()}
 
@@ -386,9 +425,52 @@ def reset_board():
 # view never receives them either.
 
 def _status(sid: str) -> str:
+    """Where a report is in the pipeline.
+
+      reported   surplus exists; nobody has been asked. Business view only.
+      requested  the business asked its matched collector to come.
+      declined   asked, told no, and the donor did not allow a fallback.
+      accepted   a collector took it.
+      delivered  it reached people; in the ledger.
+    """
     if sid in {d["supplierId"] for d in dispatch.LEDGER.deliveries}:
         return "delivered"
-    return "accepted" if claims_mod.CLAIMS.is_claimed(sid) else "pending"
+    if claims_mod.CLAIMS.is_claimed(sid):
+        return "accepted"
+    if claims_mod.REQUESTS.is_withdrawn(sid):
+        return "declined"
+    return "requested" if claims_mod.REQUESTS.is_open(sid) else "reported"
+
+
+def _window_closed(report: dict, now: datetime) -> bool:
+    """Has the donor's pickup window already shut?
+
+    A request nobody took before the dock closed is not actionable, so it comes
+    off the collectors' boards rather than sitting there being declined by
+    everyone. The business still sees it, marked expired -- it is their food.
+    """
+    to = report.get("pickupTo")
+    if not to:
+        return False
+    try:
+        h, m = (int(x) for x in to.split(":"))
+    except ValueError:
+        return False
+    close = now.replace(hour=h, minute=m, second=0, microsecond=0)
+    # a window ending after midnight belongs to tomorrow, not six hours ago
+    if close < now - timedelta(hours=6):
+        close += timedelta(days=1)
+    return close < now
+
+
+def _target_name(cid: str | None) -> str | None:
+    if not cid:
+        return None
+    b = board()
+    for x in b["agencies"] + b["pantries"]:
+        if x["id"] == cid:
+            return x["name"]
+    return cid
 
 
 @app.get("/api/board/business")
@@ -415,14 +497,9 @@ def business_view(lat: float | None = None, lon: float | None = None,
     for s in b["suppliers"]:
         row = {k: s[k] for k in ("id", "name", "type", "address", "lat", "lon",
                                  "surplus", "registered")}
-        row["reporting"] = bool(s["report"])
-        row["status"] = _status(s["id"]) if s["report"] else None
+        row.update(_lifecycle(s, b))
         if s["report"]:
-            row["lbs"] = s["report"]["lbs"]
-            holder = claims_mod.CLAIMS.holder(s["id"])
-            if holder:
-                row["acceptedBy"] = next(
-                    (a["name"] for a in b["agencies"] if a["id"] == holder), holder)
+            row["report"] = s["report"]
         if lat is not None and lon is not None and max_km:
             if haversine_km(lat, lon, s["lat"], s["lon"]) > max_km:
                 continue
@@ -436,11 +513,70 @@ def business_view(lat: float | None = None, lon: float | None = None,
                     "to donors."}
 
 
+@app.post("/api/board/request/{supplier_id}")
+def request_pickup(supplier_id: str, allow_fallback: bool = True):
+    """A business asks its matched collector to come.
+
+    This is the step the board was missing. Having surplus is not asking for a
+    pickup, and until a business asks, no collector sees the report -- a donor
+    should not have a van assigned to it without saying it wants one.
+    """
+    b = board()
+    s = _find_supplier(supplier_id)
+    if claims_mod.CLAIMS.is_claimed(supplier_id):
+        raise HTTPException(409, f"{s['name']} has already been accepted")
+    if claims_mod.REQUESTS.is_open(supplier_id) \
+            and not claims_mod.REQUESTS.is_withdrawn(supplier_id):
+        raise HTTPException(409, f"{s['name']} has already requested a pickup")
+
+    target = b["targets"].get(supplier_id)
+    if target is None:
+        # nothing viable when the board loaded -- re-check, the clock has moved
+        fresh = dispatch.assign_targets([s], b["agencies"], b["pantries"],
+                                        b["hotspots"], board_now())
+        target = fresh.get(supplier_id)
+    if target is None:
+        raise HTTPException(422, "no collector can take this — nothing to request")
+
+    rec = claims_mod.REQUESTS.open(supplier_id, target, board_now(),
+                                   allow_fallback=allow_fallback)
+    return {"request": rec, "supplier": s["name"],
+            "sentTo": _target_name(target), "status": _status(supplier_id)}
+
+
+@app.post("/api/board/request/{supplier_id}/cancel")
+def cancel_pickup(supplier_id: str):
+    """Withdraw a request that nobody has accepted yet."""
+    if claims_mod.CLAIMS.is_claimed(supplier_id):
+        raise HTTPException(409, "already accepted — too late to cancel")
+    if not claims_mod.REQUESTS.cancel(supplier_id):
+        raise HTTPException(404, "no open request for that supplier")
+    return {"cancelled": supplier_id, "status": _status(supplier_id)}
+
+
+@app.post("/api/board/agency/{agency_id}/decline/{supplier_id}")
+def decline_offer(agency_id: str, supplier_id: str):
+    """A collector says no.
+
+    Whether that ends the request is the donor's decision, taken when they
+    asked. With a fallback allowed it opens to every other collector minus this
+    one; without, it leaves every board. Either way it is off this one.
+    """
+    s = _find_supplier(supplier_id)
+    if not claims_mod.REQUESTS.visible_to(supplier_id, agency_id):
+        raise HTTPException(404, "that request is not on this collector's board")
+    rec = claims_mod.REQUESTS.decline(supplier_id, agency_id)
+    return {"declined": supplier_id, "supplier": s["name"],
+            "nowOpenToAll": rec["open_to_all"],
+            "requestEnded": rec["withdrawn"], "status": _status(supplier_id),
+            "declinedBy": [_target_name(x) for x in rec["declined_by"]]}
+
+
 @app.get("/api/board/agency/{agency_id}/offers")
 def agency_offers(agency_id: str):
     """Reports this agency could take, and the ones it already has."""
     b = board()
-    col = next((c for c in dispatch.collectors(b["agencies"], b["pantries"])
+    col = next((c for c in dispatch.request_targets(b["agencies"], b["pantries"])
                 if c["id"] == agency_id), None)
     if col is None:
         raise HTTPException(404, "no such collecting agency")
@@ -452,6 +588,15 @@ def agency_offers(agency_id: str):
         st = _status(s["id"])
         if st == "delivered":
             continue
+        # A REPORT is not an offer. Only a request the business actually made,
+        # and only one addressed to this collector (or released to everyone
+        # after a decline), belongs on this board.
+        if st == "reported":
+            continue
+        if not claims_mod.REQUESTS.visible_to(s["id"], agency_id):
+            continue
+        if _window_closed(s["report"], board_now()):
+            continue          # dock already shut; not actionable tonight
         holder = claims_mod.CLAIMS.holder(s["id"])
         if holder and holder != agency_id:
             continue          # somebody else already took it
@@ -459,11 +604,17 @@ def agency_offers(agency_id: str):
         r = dispatch.compute(s, b["agencies"], b["pantries"], b["hotspots"],
                              board_now())
         best = next((p for p in r["pairs"] if p["collector"]["id"] == agency_id), None)
+        req = claims_mod.REQUESTS.get(s["id"]) or {}
         row = {
             "supplier": {k: s[k] for k in ("id", "name", "type", "address",
                                            "lat", "lon", "surplus")},
             "report": s["report"],
             "status": st,
+            # What this collector's "no" would do. Declining is a different act
+            # depending on the donor's choice, and it should not have to guess.
+            "allowFallback": req.get("allow_fallback", True),
+            "exclusiveToMe": req.get("target") == agency_id
+                             and not req.get("open_to_all"),
             "viable": best is not None,
             "net": best["net"] if best else None,
             "miles": best["miles"] if best else None,
@@ -488,9 +639,12 @@ def agency_offers(agency_id: str):
 def accept_offer(agency_id: str, supplier_id: str):
     b = board()
     if not any(c["id"] == agency_id
-               for c in dispatch.collectors(b["agencies"], b["pantries"])):
+               for c in dispatch.request_targets(b["agencies"], b["pantries"])):
         raise HTTPException(404, "no such collecting agency")
     s = _find_supplier(supplier_id)
+    if not claims_mod.REQUESTS.visible_to(supplier_id, agency_id):
+        raise HTTPException(409, f"{s['name']} has not requested a pickup from "
+                                 f"this collector")
     holder = claims_mod.CLAIMS.holder(supplier_id)
     if holder and holder != agency_id:
         raise HTTPException(409, f"{s['name']} has already been taken by "
@@ -556,7 +710,7 @@ def preview_run(agency_id: str, supplier_ids: str = ""):
 def accept_run(agency_id: str, supplier_ids: str = ""):
     """Take the whole run: claim every pickup and book it into the ledger."""
     b = board()
-    col = next((c for c in dispatch.collectors(b["agencies"], b["pantries"])
+    col = next((c for c in dispatch.request_targets(b["agencies"], b["pantries"])
                 if c["id"] == agency_id), None)
     if col is None:
         raise HTTPException(404, "no such collecting agency")
