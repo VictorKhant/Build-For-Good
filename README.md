@@ -97,8 +97,8 @@ closer collector will usually beat it.
 
 ## The dispatch board
 
-**Left — tonight's reports.** Fourteen businesses reporting surplus, each with
-pounds, what it is, a pickup window and an expiry. Click one to compute its
+**Left — tonight's reports.** Twenty-four businesses reporting surplus, each
+with pounds, what it is, a pickup window and an expiry. Click one to compute its
 dispatch.
 
 **Centre — the map.** 207 hotspot blocks sized by need, suppliers, agency HQs,
@@ -119,6 +119,56 @@ been served. "Reset tonight" clears the evening; history stays.
 
 **Light / dark** toggle beside it. The choice persists per browser, and the map
 tiles and geometry follow it.
+
+### A report is not a request
+
+Having surplus and asking someone to drive out for it are different facts, and
+the board keeps them apart. A restaurant that reports 129 lb has not asked for
+anything yet, and until it asks, **no collector sees it** — the agency boards
+show requests, never reports. A donor should not discover a van has been
+assigned to it.
+
+So each report walks four states, visible on both sides:
+
+```
+reported  ──request──▶  requested  ──accept──▶  accepted  ──run──▶  delivered
+                            │
+                          decline
+                            ├─ fallback allowed → open to every other collector
+                            └─ fallback refused → declined, off every board
+```
+
+**Requests are addressed, not broadcast.** The engine matches one collector and
+the request goes to that collector alone. Twenty-four reports fanned out to
+everyone would be a noticeboard; each agency instead gets around three offers it
+is actually expected to answer. Assignment is least-loaded-first with best net
+value as the tie-break, so the spread is even without being uniform — a
+prepared-food report only has three collectors that accept prepared food, and
+forcing an exact split would send food to whoever was next in line rather than
+to whoever should have it.
+
+**What a decline means is the donor's choice**, made with a checkbox when they
+request:
+
+| | A decline from the matched collector |
+|---|---|
+| fallback allowed *(default)* | opens the request to every other collector, minus the decliner. A no from one agency is not a no from the city. |
+| fallback refused | ends the request. It leaves every board. |
+
+The second option exists because some kitchens will only hand food to the
+partner they have an agreement with, and a platform that quietly shopped their
+food around after that partner said no would be overriding them. The collector
+is told which kind of no it is giving before it clicks. A donor whose exclusive
+request was declined can re-ask openly; nothing is lost.
+
+**A closed pickup window removes the request from the collectors' boards.** A
+request nobody took before the dock shut is not actionable, so it stops sitting
+there being declined by everyone. The donor still sees it, marked, because it is
+their food and reopening the window puts it back.
+
+Requests can be withdrawn until someone accepts. After that the donor's view
+says who is coming and offers nothing to click, because the run is no longer
+theirs to cancel.
 
 ### Restaurants can register themselves
 
@@ -276,6 +326,7 @@ bellyup/
   app.py            FastAPI: board, roles, geocoding
   demo_data.py      loads the datasets into the shapes the UI expects
   dispatch.py       the reward−cost engine, freshness, ledger      ← core
+  claims.py         request lifecycle: who was asked, who said no
   registry.py       persistence: registrations, reports, opt-outs
   geocode.py        address → coordinates (Census, then Nominatim)
   static/board/     the dispatch board UI
