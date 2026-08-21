@@ -486,5 +486,25 @@
     "source": "nominatim"
   },
   "zzzqqq nowhere at all, san diego, ca": null,
-  "zzzz nowhere at all, san diego, ca": null
+  "zzzz nowhere at all, san diego, ca": null,
+  "9500 gilma dr, san diego, ca": null,
+  "9500 gilma drive, san diego, ca": null,
+  "9500 gilman dr, san diego, ca": {
+    "lat": 32.879244,
+    "lon": -117.231125,
+    "matched": "University of California, San Diego, 9500, Gilman Drive, University City, San Diego, San Diego County, California, 92093, United States",
+    "source": "nominatim"
+  },
+  "9500 gilman drive, san diego, ca": {
+    "lat": 32.879244,
+    "lon": -117.231125,
+    "matched": "University of California, San Diego, 9500, Gilman Drive, Torrey Pines, San Diego, San Diego County, California, 92093, United States",
+    "source": "nominatim"
+  },
+  "9500, san diego, ca": {
+    "lat": 32.879244,
+    "lon": -117.231125,
+    "matched": "University of California, San Diego, 9500, Gilman Drive, Torrey Pines, San Diego, San Diego County, California, 92093, United States",
+    "source": "nominatim"
+  }
 }

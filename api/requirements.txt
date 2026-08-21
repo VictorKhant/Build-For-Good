@@ -1,0 +1,5 @@
+fastapi>=0.136,<1
+uvicorn>=0.46,<1
+pandas>=2.2,<3
+scipy>=1.15,<2
+shapely>=2.0,<3

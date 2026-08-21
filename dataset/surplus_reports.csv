@@ -1,0 +1,3 @@
+business_name,supplier_id,lbs,items,time,pickup_from,pickup_to,expires_at,freshness,surplus_type,has_surplus,updated_at,address,lon,lat,facility_type,self_registered
+"University Of California, San Diego",R100,40.0,snacks,18:30,18:30,20:30,22:00,fresh,packaged/produce,True,2026-08-21T11:56:28,9500 Gilman Dr,-117.231125,32.879244,restaurant,True
+UCSD,R101,40.0,surplus reported by the kitchen,18:30,18:30,20:30,22:00,fresh,prepared,True,2026-08-21T13:04:38,9500 Gilman Dr,-117.231125,32.879244,restaurant,True

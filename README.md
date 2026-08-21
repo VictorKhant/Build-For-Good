@@ -2,6 +2,19 @@
 
 **Surplus food → the streets that need it. San Diego.**
 
+The latest main experience is integrated with Patrick's SQL/FastAPI
+optimization layer. The Agency view keeps the People and Food workflows from
+main while adding a persistent **Show Network** view, OSRM road geometry,
+sequential truck routes, and dynamic insertion offers for occasional donations.
+
+Optimization code and outputs live under `calc/`, `optim/`, and `api/`.
+Run the integrated board with:
+
+```bash
+cd bellyup
+python3 -m uvicorn app:app --reload --port 8000
+```
+
 Food businesses report end-of-day surplus. The platform picks the best
 **collector → hotspot** dispatch — an agency box truck or a mobile pantry unit —
 by maximising need-weighted meals served net of what the run actually costs to

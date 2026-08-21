@@ -9,11 +9,11 @@
 "use strict";
 
 let HOTSPOTS = [], SUPPLIERS = [], AGENCIES = [], PANTRIES = [], C = {}, CLAIMS = {};
-let showForecast = false;
 let HISTORY = [], tonight = [], OPTED_OUT = 0;
 let CANDIDATES = [], REPORTING = [], COLLECTORS = [];
+let showForecast = false;
 
-const api = (path, opts) => fetch(path, opts).then(async r => {
+const api = (path, opts = {}) => fetch(path, { cache: "no-store", ...opts }).then(async r => {
   const body = await r.json().catch(() => ({}));
   if (!r.ok) throw new Error(body.detail || r.statusText);
   return body;
@@ -21,20 +21,15 @@ const api = (path, opts) => fetch(path, opts).then(async r => {
 
 async function loadBoard() {
   const b = await api("/api/board");
-  /* The board is replaced wholesale on every refresh. __match is the cached
-     dispatch preview, keyed to the report rather than to the request, so carry
-     it over -- dropping it left the panel on "Finding a collector..." after a
-     withdrawal until the restaurant was clicked again. */
-  const prevMatch = {};
-  for (const s of (SUPPLIERS || [])) if (s.__match) prevMatch[s.id] = s.__match;
   HOTSPOTS = b.hotspots; SUPPLIERS = b.suppliers;
-  for (const s of SUPPLIERS) if (prevMatch[s.id]) s.__match = prevMatch[s.id];
   AGENCIES = b.agencies; PANTRIES = b.pantries; C = b.constants;
   HISTORY = b.history || []; tonight = b.tonight || [];
   CLAIMS = b.claims || {};
   OPTED_OUT = b.optedOut || 0;
   CANDIDATES = HOTSPOTS.filter(h => h.need >= C.MIN_CANDIDATE_NEED);
-  REPORTING = SUPPLIERS.filter(s => s.report);
+  REPORTING = SUPPLIERS.filter(s => s.report).sort((a, b) =>
+    Number(Boolean(b.registered)) - Number(Boolean(a.registered)) ||
+    String(b.report.updatedAt || b.report.time || "").localeCompare(String(a.report.updatedAt || a.report.time || "")));
   COLLECTORS = [
     ...AGENCIES.map(a => ({ ...a, kind: "agency", capacityLbs: C.AGENCY_CAPACITY_LBS })),
     ...PANTRIES.filter(p => p.dispatchable).map(p => ({ ...p, kind: "pantry", capacityLbs: C.PANTRY_CAPACITY_LBS })),
@@ -127,6 +122,9 @@ const tiles = L.tileLayer(TILE_URLS[theme], {
 
 const fxLayer = L.layerGroup().addTo(map);   // scan lines, routes, radar
 const baseLayer = L.layerGroup().addTo(map); // hotspots, collectors, suppliers
+const simulationLayer = L.layerGroup().addTo(map); // complete multi-truck network
+const offerRouteLayer = L.layerGroup().addTo(map); // temporary offer previews only
+let simulationRoutes = [], simulationAllocations = [], simulationAssigned = 0;
 
 const TRUCK_SVG = '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M3 5h11v9H3zM14 8h4l3 3v3h-7zM6 18a2 2 0 1 0 0-4 2 2 0 0 0 0 4zm11 0a2 2 0 1 0 0-4 2 2 0 0 0 0 4z"/></svg>';
 const typeIcon = { grocery: "🛒", hotel: "🏨", venue: "🏟", health: "🏥", restaurant: "🍽" };
@@ -135,13 +133,6 @@ const typeIcon = { grocery: "🛒", hotel: "🏨", venue: "🏟", health: "🏥"
 const hotspotMarkers = {}, agencyMarkers = {}, pantryMarkers = {}, supplierMarkers = {};
 function hotspotStyle(h) {
   const closed = hotspotClosed(h);
-  /* Only significant clusters reach the map at all now (see buildLayers).
-     Among those, an emerging or cooling read is the one thing that is
-     actually predictive (giPredict, from the real trend in
-     BlockLevel_Counts_Panel261.csv) -- "established" is just a real cluster
-     with no trend signal either way. It stays on the map for context, but
-     smaller and fainter, so the two predictive colours are what the eye
-     lands on rather than getting lost among plain clusters. */
   const cluster = h.giFlag === "hot95" || h.giFlag === "hot99";
   const predictive = h.giPredict === "emerging" || h.giPredict === "cooling";
   const col = closed ? themeColor("--c-route")
@@ -165,11 +156,6 @@ function hotspotTip(h) {
   const status = hotspotClosed(h)
     ? `<br><b style="color:${themeColor("--c-route")}">served tonight — off the candidate list</b>`
     : servedNow > 0 ? `<br>${fmtInt(servedNow)} meals delivered tonight; ${(h.need - servedNow).toFixed(1)} need remaining` : "";
-  /* Only significant clusters ever reach this tooltip now (buildLayers only
-     binds one for hot95/hot99), so this is always the real claim, never a
-     hedge about an isolated spike -- those no longer appear on the map at
-     all. Gi* itself is a snapshot, not a forecast -- the trend line below is
-     what makes a genuine prediction, stated as its own claim. */
   const cluster = h.giFlag === "hot99"
     ? `<br><b>significant cluster</b> (p&lt;0.01, z=${h.giZ})`
     : `<br><b>significant cluster</b> (p&lt;0.05, z=${h.giZ})`;
@@ -177,68 +163,35 @@ function hotspotTip(h) {
     ? `<br><b style="color:${themeColor("--c-emerging")}">emerging</b> — growing ${Math.abs(h.giTrend).toFixed(1)}/yr, becoming a cluster`
     : h.giPredict === "cooling"
     ? `<br><b style="color:${themeColor("--c-cooling")}">cooling</b> — declining ${Math.abs(h.giTrend).toFixed(1)}/yr from its peak`
-    : h.giPredict === "established"
-    ? `<br>established — steady, not sharply moving`
-    : "";
-  /* The area cross-check (area_forecast.py) only ever appears when the
-     WHOLE neighbourhood's trend clears p<0.05 -- below that bar it is
-     omitted entirely, on purpose, rather than shown as a weak or uncertain
-     read. A block-level pattern too thin to call is still clutter even
-     with a caveat attached. */
+    : h.giPredict === "established" ? `<br>established — steady, not sharply moving` : "";
   const areaCheck = h.giAreaSignal === "reinforced"
     ? `<br><span style="opacity:.85">↳ ${h.area} is also trending that way (${h.giAreaTrend > 0 ? "+" : ""}${h.giAreaTrend}/mo, p&lt;0.05)</span>`
     : h.giAreaSignal === "contradicted"
-    ? `<br><span style="opacity:.85">↳ but ${h.area} overall is trending the other way (${h.giAreaTrend > 0 ? "+" : ""}${h.giAreaTrend}/mo, p&lt;0.05)</span>`
-    : "";
+    ? `<br><span style="opacity:.85">↳ but ${h.area} overall is trending the other way (${h.giAreaTrend > 0 ? "+" : ""}${h.giAreaTrend}/mo, p&lt;0.05)</span>` : "";
   return `<b>${h.location}</b> &middot; ${h.area}` +
     `<div class="tip-k">need ${h.need.toFixed(1)} person-equivalents &middot; rank #${h.rank}` +
     `<br>food access ${h.accessDays.toFixed(h.accessDays % 1 ? 1 : 0)} days/week${status}${cluster}${predict}${areaCheck}</div>`;
 }
-/* The forecast toggle is an OVERLAY, not a swap: the current-hotspot layer
-   below always renders exactly as it does today. This just adds a handful
-   of extra markers for demo_data.forecast_changes() -- the small set of
-   blocks where Gi*'s cluster verdict actually flips between today and the
-   projection (typically single digits, out of 52+ current clusters), so
-   what changed stays visible next to what's real right now instead of
-   replacing it.
 
-     "gained"  not a cluster today -- a genuinely new marker, dashed, in the
-               emerging colour (nothing was drawn there before)
-     "lost"    a cluster today -- drawn as a second, larger dashed ring
-               AROUND the existing current marker at that spot, in the same
-               cooling colour the current view already uses for a declining
-               cluster (dashed + larger + no fill keeps it distinct from
-               that solid marker underneath, which stays untouched and
-               visible); this one says "fading out", not "gone already" */
 let FORECAST_MONTHS = 6;
 let FORECAST_CHANGES = null;
 const changeMarkers = {};
 
 function changeStyle(c) {
   const col = c.change === "gained" ? themeColor("--c-emerging") : themeColor("--c-cooling");
-  return {
-    radius: (3 + Math.sqrt(c.projectedNeed) * 2.1) + (c.change === "lost" ? 6 : 0),
-    color: col,
-    weight: 2.6,
-    opacity: 0.9,
-    fillColor: col,
-    fillOpacity: c.change === "gained" ? 0.22 : 0,
-    dashArray: "2 5",
-    interactive: true,
-  };
+  return { radius: (3 + Math.sqrt(c.projectedNeed) * 2.1) + (c.change === "lost" ? 6 : 0),
+    color: col, weight: 2.6, opacity: .9, fillColor: col,
+    fillOpacity: c.change === "gained" ? .22 : 0, dashArray: "2 5", interactive: true };
 }
+
 function changeTip(c) {
   const delta = c.projectedNeed - c.currentNeed;
   const trend = c.hadTrendData
     ? `need ${c.currentNeed.toFixed(1)} now &rarr; ${c.projectedNeed.toFixed(1)} projected (${delta >= 0 ? "+" : ""}${delta.toFixed(1)})`
     : `no trend history for this block`;
   return c.change === "gained"
-    ? `<b>${c.location}</b> &middot; ${c.area}<div class="tip-k">` +
-      `<b style="color:${themeColor("--c-emerging")}">predicted NEW cluster</b> in ~${FORECAST_MONTHS} months (z=${c.giZ})` +
-      `<br>${trend} &middot; not significant today</div>`
-    : `<b>${c.location}</b> &middot; ${c.area}<div class="tip-k">` +
-      `<b style="color:${themeColor("--c-cooling")}">predicted to fall out</b> of significance in ~${FORECAST_MONTHS} months` +
-      `<br>${trend} &middot; a real cluster today, fading</div>`;
+    ? `<b>${c.location}</b> &middot; ${c.area}<div class="tip-k"><b style="color:${themeColor("--c-emerging")}">predicted NEW cluster</b> in ~${FORECAST_MONTHS} months (z=${c.giZ})<br>${trend} &middot; not significant today</div>`
+    : `<b>${c.location}</b> &middot; ${c.area}<div class="tip-k"><b style="color:${themeColor("--c-cooling")}">predicted to fall out</b> of significance in ~${FORECAST_MONTHS} months<br>${trend} &middot; a real cluster today, fading</div>`;
 }
 
 async function toggleForecast() {
@@ -247,15 +200,8 @@ async function toggleForecast() {
   if (showForecast) {
     btn.textContent = "Loading…";
     if (!FORECAST_CHANGES) {
-      try {
-        const r = await api(`/api/board/hotspots/forecast?months=${FORECAST_MONTHS}`);
-        FORECAST_CHANGES = r.changes;
-      } catch (e) {
-        showForecast = false;
-        btn.textContent = "Show predicted changes";
-        alert("Couldn't load the forecast: " + e.message);
-        return;
-      }
+      try { FORECAST_CHANGES = (await api(`/api/board/hotspots/forecast?months=${FORECAST_MONTHS}`)).changes; }
+      catch (e) { showForecast = false; btn.textContent = "Show predicted changes"; alert("Couldn't load the forecast: " + e.message); return; }
     }
     btn.textContent = `Hide predicted changes (${FORECAST_CHANGES.length})`;
     btn.classList.add("on");
@@ -265,8 +211,6 @@ async function toggleForecast() {
   }
   buildLayers();
 }
-$("forecastBtn").addEventListener("click", toggleForecast);
-
 function refreshHotspots() {
   for (const h of HOTSPOTS) {
     if (!hotspotMarkers[h.id]) continue;
@@ -289,14 +233,6 @@ function buildLayers() {
 
   map.fitBounds(L.latLngBounds(HOTSPOTS.map(h => [h.lat, h.lon])).pad(0.12));
 
-/* Only blocks that clear Gi*'s own significance bar (p<0.05) go on the map
-   at all -- the rest are exactly the isolated spikes the whole exercise
-   exists to tell apart from real clusters, and showing them at the same
-   density just re-clutters the map with the noise Gi* was supposed to
-   filter out. This is a DISPLAY decision only: dispatch.py's matching still
-   runs against the full need>=MIN_CANDIDATE_NEED list untouched -- a real
-   23-person block does not stop being eligible for a pickup just because it
-   is not a statistical cluster (GI_STAR_SPEC.md 3.3). */
 $("forecastBtn").hidden = role !== "agency";
 const significantHotspots = HOTSPOTS.filter(h => h.giFlag === "hot95" || h.giFlag === "hot99");
 for (const h of (role === "agency" ? significantHotspots : [])) {
@@ -403,7 +339,7 @@ function renderFeed() {
     <div class="report-card ${done.has(s.id) ? "done" : ""}" id="card-${s.id}">
       <div class="rc-top">
         <span>${typeIcon[s.type] || "🍽"}</span>
-        <span class="rc-name">${s.registered ? '<span class="rc-saved">SAVED</span>' : ""}${
+        <span class="rc-name">${s.registered ? '<span class="rc-saved">NEW</span>' : ""}${
           s.report.updated ? '<span class="rc-upd">UPDATED</span>' : ""}${s.name}</span>
         <span class="rc-time">${s.report.time}</span>
         <button class="rc-edit" data-edit="${s.id}" title="Surplus differs every night — update tonight's numbers">Update</button>
@@ -1224,6 +1160,7 @@ const EMPTY_BY_ROLE = {
 let role = "agency";
 let myAgency = null;
 let offers = { offers: [], accepted: [] };
+let agencyOfferCounts = {};
 let planned = null;
 let basket = [];       // chosen but NOT yet accepted -- previewing is free
 
@@ -1245,16 +1182,22 @@ function setRole(next) {
   $("feedSub").textContent = heads[next][1];
   $("publicBar").hidden = next !== "public";
   $("regOpen").hidden = next !== "business";
+  $("simPanel").hidden = next !== "agency";
+  $("networkDetail").hidden = next !== "agency";
   if (next !== "business") { $("regForm").hidden = true; }
 
   selectedId = null;
   basket = []; planned = null;
   clearFx();
+  offerRouteLayer.clearLayers();
   showEmpty(EMPTY_BY_ROLE[next]);
   buildLayers();
   if (next === "agency") {
-    const list = collectingList();
-    selectAgency(myAgency || (list[0] && list[0].id));
+    myAgency = null;
+    if (simulationRoutes.length) drawSimulationRoutes(simulationRoutes);
+    renderAgencyList();
+    loadAgencyOfferCounts();
+    showEmpty(`<div class="re-icon">&#9993;</div><p>Please select a collector to view its offer inbox.</p>`);
   }
   else if (next === "public") renderPantries();
   else { renderBusiness(); }
@@ -1325,43 +1268,6 @@ function renderBusiness() {
     `<span class="dot dot-quiet"></span> Nothing is offered to a collector until
      you request a pickup.`;
   renderStats();
-}
-
-/* The one collector a report is addressed to, as a full record with coords.
-
-   `matchedToId` is assigned server-side across ALL reports at once -- least-
-   loaded collector first, best net value only as the tie-break (see
-   dispatch.assign_targets). So it is deliberately NOT the top row of this
-   report's own ranking: a collector already holding four reports loses to a
-   quieter one scoring slightly worse. The panel read `matchedTo` from the
-   server while the map drew this report's own best pair, so the route pointed
-   at Feeding San Diego while the request went to Jacobs & Cushman. Everything
-   donor-facing resolves through here instead. */
-function matchedCollector(s) {
-  if (!s) return null;
-  const all = [...AGENCIES, ...PANTRIES];
-  const byName = n => all.find(x => x.name === n) || null;
-  /* whoever actually holds it outranks whoever it was offered to */
-  if (s.acceptedBy) return byName(s.acceptedBy);
-  if (s.matchedToId) {
-    const hit = all.find(x => x.id === s.matchedToId);
-    if (hit) return hit;
-  }
-  return s.matchedTo ? byName(s.matchedTo) : null;
-}
-
-/* One blue leg: the collector coming to this restaurant, and nothing else.
-   Keyed off matchedCollector so it cannot drift from the panel beside it. */
-function drawMatchRoute(s) {
-  const c = matchedCollector(s);
-  if (!c) return;
-  fxLayer.addLayer(L.polyline([[c.lat, c.lon], [s.lat, s.lon]], {
-    color: themeColor("--c-agency"), bellyRole: "--c-agency",
-    weight: 3, opacity: .9, className: "route-leg1", interactive: false }));
-  fxLayer.addLayer(L.circleMarker([s.lat, s.lon], {
-    radius: 8, color: themeColor("--c-supplier"), weight: 3,
-    fillOpacity: .9, interactive: false }));
-  return c;
 }
 
 /* The request lives beside the restaurant it belongs to: who it was matched
@@ -1440,28 +1346,19 @@ async function sendRequest(id) {
     await api(`/api/board/request/${id}?allow_fallback=${fb}`, { method: "POST" });
   }
   catch (e) { alert(e.message); }
-  await afterRequestChange(id);
+  await refreshAll();
+  selectedId = id;
+  renderBusiness();
+  renderRequestPanel(SUPPLIERS.find(x => x.id === id));
 }
 
 async function cancelRequest(id) {
   try { await api(`/api/board/request/${id}/cancel`, { method: "POST" }); }
   catch (e) { alert(e.message); }
-  await afterRequestChange(id);
-}
-
-/* Shared tail for both. The stale blue leg was the visible half of the bug:
-   refreshAll() rebuilds baseLayer but never touches fxLayer, so the line drawn
-   before the request survived it -- and if the target had moved on (a decline
-   reopening the offer, someone else accepting) it kept pointing at the old
-   collector while the panel named the new one. Redraw from the fresh record. */
-async function afterRequestChange(id) {
   await refreshAll();
   selectedId = id;
-  const s = SUPPLIERS.find(x => x.id === id);
   renderBusiness();
-  renderRequestPanel(s);
-  fxLayer.clearLayers();
-  drawMatchRoute(s);
+  renderRequestPanel(SUPPLIERS.find(x => x.id === id));
 }
 
 /* RIGHT, business view: where this request stands.
@@ -1485,6 +1382,13 @@ function renderRequestPanel(s) {
     declined: ["Declined", `${(s.declinedBy || []).join(", ") || "The collector"} `
       + `said no, and you asked them exclusively.`],
   };
+  const rec = s.recommendation;
+  const recommendation = rec ? `<section class="match-card">
+    <div class="rb-h">Recommended match</div><h3>${rec.agency_name}</h3>
+    <div class="match-grid"><span><b>+${Number(rec.marginal_miles ?? rec.pickup_distance_miles).toFixed(1)} mi</b>marginal distance</span><span><b>+${Math.round(rec.marginal_minutes || 0)} min</b>marginal time</span><span><b>${Math.round(rec.additional_meals ?? rec.unmet_demand_served)}</b>meals rescued</span><span><b>${Number(rec.match_score).toFixed(0)}/100</b>match score</span></div>
+    ${status === "requested" && s.deadlineAt ? `<div class="match-wait">Awaiting agency response — <b data-deadline="${s.deadlineAt}">10:00</b> remaining</div>` : ""}
+    <details><summary>Why this match?</summary><ul>${(rec.why || []).map(reason => `<li>${reason}</li>`).join("")}</ul></details>
+  </section>` : "";
 
   /* Build first, reveal second. Unhiding before the template is evaluated
      means any error in it leaves the PREVIOUS role's panel on screen -- that
@@ -1494,6 +1398,7 @@ function renderRequestPanel(s) {
     <div class="rb-eyebrow">${label[status][0]}</div>
     <div class="rb-source">${s.name} &middot; ${fmtInt(s.report.lbs)} lb
       ${s.surplus}<br>${label[s.status][1]}</div>
+    ${recommendation}
 
     <div class="pipeline">
       ${steps.map((st, i) => `
@@ -1528,6 +1433,16 @@ function renderRequestPanel(s) {
   $("resultBody").innerHTML = html;
   $("resultEmpty").style.display = "none";
   $("resultBody").hidden = false;
+  const countdown = $("resultBody").querySelector("[data-deadline]");
+  if (countdown) {
+    const tick = () => {
+      const seconds = Math.max(0, Math.floor((new Date(countdown.dataset.deadline) - Date.now()) / 1000));
+      countdown.textContent = `${String(Math.floor(seconds / 60)).padStart(2, "0")}:${String(seconds % 60).padStart(2, "0")}`;
+      if (seconds > 0 && countdown.isConnected) setTimeout(tick, 1000);
+      else if (countdown.isConnected) refreshAll();
+    };
+    tick();
+  }
 }
 
 /* The scan is not decoration standing in for work. The lines flick out to the
@@ -1605,26 +1520,11 @@ async function pickRestaurant(id) {
   const started = performance.now();
   try {
     const r = await dispatchFor(s);
-    /* The pair for the collector this report is ADDRESSED to, not the pair
-       that scores highest. Requesting a pickup sends it to the server's
-       target, so quoting anyone else here would name a collector the button
-       is not going to ask. */
-    const want = matchedCollector(s);
-    const b = (want && r.pairs.find(p => p.collector.id === want.id)) || r.pairs[0];
-    /* Target present but with no viable pair left -- the board caches its
-       assignment and the clock has moved on since. Measured on tonight's data
-       that is 1 report in 26. Keep the collector honest and measure the leg
-       ourselves rather than quoting a different collector's numbers under its
-       name. */
-    const own = !want || !b || want.id === b.collector.id;
+    const b = r.pairs[0];
     s.__match = b ? {
-      ok: true,
-      collector: (want || b.collector).name,
-      lat: (want || b.collector).lat, lon: (want || b.collector).lon,
-      miles: own ? b.leg1 : roadMi(want, s),
-      pickupAt: own ? b.pickupAt : null,
-      deferred: own ? b.deferred : null,
-      fmv: r.fmv,
+      ok: true, collector: b.collector.name, pickupAt: b.pickupAt,
+      miles: b.leg1, fmv: r.fmv, deferred: b.deferred,
+      lat: b.collector.lat, lon: b.collector.lon,
     } : { ok: false, reason: r.headline || "No agency can collect this yet." };
     s.__evaluated = r.evaluated || 0;
   } catch (e) { s.__match = { ok: false, reason: e.message }; }
@@ -1638,9 +1538,18 @@ async function pickRestaurant(id) {
   renderBusiness();
   renderRequestPanel(s);
 
-  const c = s.__match.ok ? drawMatchRoute(s) : null;
-  if (c) map.flyToBounds(L.latLngBounds([[c.lat, c.lon], [s.lat, s.lon]]).pad(0.3),
-                         { duration: 0.7 });
+  /* one line: the collector coming to this restaurant, and nothing else */
+  const m = s.__match;
+  if (m.ok) {
+    fxLayer.addLayer(L.polyline([[m.lat, m.lon], [s.lat, s.lon]], {
+      color: themeColor("--c-agency"), bellyRole: "--c-agency",
+      weight: 3, opacity: .9, className: "route-leg1", interactive: false }));
+    fxLayer.addLayer(L.circleMarker([s.lat, s.lon], {
+      radius: 8, color: themeColor("--c-supplier"), weight: 3,
+      fillOpacity: .9, interactive: false }));
+    map.flyToBounds(L.latLngBounds([[m.lat, m.lon], [s.lat, s.lon]]).pad(0.3),
+                    { duration: 0.7 });
+  }
   /* NOT showEmpty() here -- renderRequestPanel has just filled this panel,
      and calling it re-hid the content and restored the "pick a restaurant"
      prompt over the top of it. */
@@ -1673,7 +1582,6 @@ async function selectAgency(id) {
    so the left panel always answers "which one of these am I looking at". */
 function renderAgencyList() {
   const list = collectingList();
-  if (!myAgency) myAgency = list[0] && list[0].id;
   $("feed").innerHTML =
     `<div class="sec-head">Collectors (${list.length})</div>`
     + list.map(a => `
@@ -1681,6 +1589,7 @@ function renderAgencyList() {
         <div class="offer-top">
           <span>${a.kind === "agency" ? "🚚" : "🚐"}</span>
           <span class="offer-name">${a.name}</span>
+          <span class="offer-count ${(agencyOfferCounts[a.id] || 0) ? "" : "zero"}">${agencyOfferCounts[a.id] || 0}</span>
         </div>
         <div class="offer-sub">${a.sub}${a.id === myAgency && offers.agency
           ? ` · ${offers.agency.capacityLbs} lb capacity` : ""}</div>
@@ -1691,10 +1600,26 @@ function renderAgencyList() {
     `<span class="dot dot-quiet"></span> Pick a collector to see what is offered to it.`;
 }
 
+async function loadAgencyOfferCounts() {
+  const list = collectingList();
+  const rows = await Promise.all(list.map(async collector => {
+    try {
+      const inbox = await api(`/api/board/agency/${collector.id}/offers`);
+      return [collector.id, inbox.offers.length];
+    } catch (_) { return [collector.id, 0]; }
+  }));
+  agencyOfferCounts = Object.fromEntries(rows);
+  if (role === "agency") renderAgencyList();
+}
+
 /* RIGHT: the run you are building for the selected collector. */
 async function loadOffers() {
   const list = collectingList();
-  myAgency = myAgency || (list[0] || {}).id;
+  if (!myAgency) {
+    renderAgencyList();
+    showEmpty(`<div class="re-icon">&#9993;</div><p>Please select a collector to view its offer inbox.</p>`);
+    return;
+  }
   try { offers = await api(`/api/board/agency/${myAgency}/offers`); }
   catch (e) { $("resultBody").innerHTML = `<div class="empty">${e.message}</div>`; return; }
 
@@ -1705,6 +1630,8 @@ async function loadOffers() {
   }
   basket = basket.filter(id => offers.offers.some(o => o.supplier.id === id));
   renderAgencyList();
+  drawSelectedAgencyRoutes();
+  drawAgencyOfferRoutes();
 
   const row = o => {
     const inRun = basket.includes(o.supplier.id);
@@ -1728,6 +1655,9 @@ async function loadOffers() {
              · ${o.miles.toFixed(1)} mi alone`
           : `<br><span style="color:var(--bad)">${o.whyNot}</span>`}
       </div>
+      ${o.recommendation ? `<div class="offer-match"><b>${Number(o.recommendation.match_score).toFixed(0)}/100 insertion match</b> · +${Number(o.recommendation.marginal_miles ?? o.recommendation.pickup_distance_miles).toFixed(1)} marginal mi · +${Math.round(o.recommendation.marginal_minutes || 0)} min<br>${Number(o.recommendation.additional_meals ?? o.recommendation.unmet_demand_served).toFixed(0)} meals · ${Number(o.recommendation.meals_per_marginal_mile || 0).toFixed(1)} meals/marginal mi
+        ${o.deadlineAt ? `<br>Respond within <b data-deadline="${o.deadlineAt}">10:00</b>` : ""}
+        <details><summary>Why this match?</summary><ul>${(o.recommendation.why || []).map(reason => `<li>${reason}</li>`).join("")}</ul></details></div>` : ""}
       <div class="offer-acts">
         ${o.viable ? `<button class="offer-act ${inRun ? "ghost" : ""}"
             data-toggle="${o.supplier.id}">${inRun ? "Remove" : "Add to run"}</button>
@@ -1769,14 +1699,27 @@ async function loadOffers() {
           `/api/board/agency/${myAgency}/decline/${b.dataset.decline}`,
           { method: "POST" });
         toast(r.requestEnded
-          ? `${r.supplier}: declined. The donor asked you only, so the request ends.`
-          : `${r.supplier}: declined and released to the other collectors.`);
+          ? `${r.supplier}: declined; no feasible agency remains.`
+          : `${r.supplier}: declined. Offering next to ${r.nextAgency}.`);
       } catch (e) { alert(e.message); }
       basket = basket.filter(x => x !== b.dataset.decline);
       planned = null;
       await refreshAll();
+      await loadAgencyOfferCounts();
       loadOffers();
     }));
+  $("resultBody").querySelectorAll("[data-deadline]").forEach(countdown => {
+    const tick = () => {
+      const seconds = Math.max(0, Math.floor((new Date(countdown.dataset.deadline) - Date.now()) / 1000));
+      countdown.textContent = `${String(Math.floor(seconds / 60)).padStart(2, "0")}:${String(seconds % 60).padStart(2, "0")}`;
+      if (seconds > 0 && countdown.isConnected) setTimeout(tick, 1000);
+      else if (countdown.isConnected) {
+        loadAgencyOfferCounts();
+        loadOffers();
+      }
+    };
+    tick();
+  });
   const ab = $("acceptBtn");
   if (ab) ab.addEventListener("click", () => acceptRun(basket));
 
@@ -1808,14 +1751,19 @@ async function acceptRun(ids) {
     basket = basket.filter(x => !ids.includes(x));
     planned = null;
     await refreshAll();
+    await loadLiveNetwork();
+    await loadAgencyOfferCounts();
     $("ledgerCount").textContent = tonight.length;
     if (res.leftOnOffer.length)
       alert("Too much for one load — still on offer: " + res.leftOnOffer.join(", "));
-    loadOffers();
+    await loadOffers();
     /* Now real: redraw the same route bold and animated instead of faded --
        "this is taken" should look different from "this is proposed". */
     if (acceptedPlan && acceptedPlan.feasible) drawPlan(acceptedPlan, { faded: false });
-    openLedger();
+    if (res.networkUpdated) {
+      toast("Offer accepted. The pickup was inserted into the live route.");
+      drawSelectedAgencyRoutes();
+    } else openLedger();
   } catch (e) { alert(e.message); }
 }
 
@@ -2058,12 +2006,179 @@ function wireRoles() {
   });
 }
 
+/* ------------------------------------------------------ global simulation */
+const simulationMethodName = method => ({
+  greedy: "Greedy baseline",
+  optimized: "Global LP",
+  route_optimized: "Hybrid optimized network",
+})[method] || method;
+
+function weightedTransitPercentile(stops, percentile) {
+  const rows = [...stops].sort((a, b) =>
+    Number(a.meal_transit_from_pickup_minutes) - Number(b.meal_transit_from_pickup_minutes));
+  const target = rows.reduce((sum, row) => sum + Number(row.meals_delivered || 0), 0) * percentile;
+  let cumulative = 0;
+  for (const row of rows) {
+    cumulative += Number(row.meals_delivered || 0);
+    if (cumulative >= target) return Number(row.meal_transit_from_pickup_minutes || 0);
+  }
+  return 0;
+}
+
+function addSimulationArrows(geometry, color, targetLayer = simulationLayer) {
+  const coordinates = geometry && geometry.coordinates;
+  if (!coordinates || coordinates.length < 2) return;
+  const interval = Math.max(12, Math.floor(coordinates.length / 7));
+  for (let i = interval; i < coordinates.length - 1; i += interval) {
+    const from = coordinates[i - 1], to = coordinates[i];
+    const angle = Math.atan2(to[1] - from[1], to[0] - from[0]) * 180 / Math.PI;
+    targetLayer.addLayer(L.marker([to[1], to[0]], { interactive: false,
+      icon: L.divIcon({ className: "", html: `<span class="sim-arrow" style="color:${color};transform:rotate(${-angle}deg)">➤</span>`, iconSize: [16, 16], iconAnchor: [8, 8] }) }));
+  }
+}
+
+function drawSimulationRoutes(routes, showStops = false) {
+  simulationLayer.clearLayers();
+  const colors = ["#1baf7a", "#3987e5", "#d55181", "#eb6834", "#9085e9", "#54c7ec"];
+  routes.forEach((route, index) => {
+    if (!route.geometry) return;
+    const color = colors[index % colors.length];
+    simulationLayer.addLayer(L.geoJSON(route.geometry, {
+      style: { color, weight: 3.2, opacity: .78, className: "sim-route" },
+    }).bindTooltip(`${route.hotspot_count} sequential hotspots · ${Number(route.distance_miles).toFixed(1)} mi`, { className: "hs-tip" }));
+    addSimulationArrows(route.geometry, color);
+    if (showStops) route.stops.forEach(stop => {
+      const icon = L.divIcon({ className: "", html: `<span class="sim-stop ${stop.stop_type}">${stop.stop_sequence}</span>`, iconSize: [22, 22], iconAnchor: [11, 11] });
+      simulationLayer.addLayer(L.marker([stop.lat, stop.lon], { icon }).bindTooltip(
+        `#${stop.stop_sequence} ${stop.stop_name}${stop.stop_type === "hotspot" ? ` · ${Number(stop.meals_delivered).toFixed(1)} meals` : ""}`,
+        { className: "hs-tip" }));
+    });
+  });
+}
+
+function drawSelectedAgencyRoutes() {
+  if (!myAgency || !simulationRoutes.length) return;
+  const collector = collectingList().find(item => item.id === myAgency);
+  const routes = simulationRoutes.filter(route => route.agency_id === myAgency
+    || (collector && route.agency_name === collector.name));
+  // Selecting an inbox must never replace the backbone network. Only move the
+  // viewport toward this collector's routes; route-card focus remains the one
+  // explicit action that temporarily isolates a route (with Restore available).
+  const points = routes.flatMap(route => (route.stops || []).map(stop => [stop.lat, stop.lon]));
+  if (points.length) map.flyToBounds(L.latLngBounds(points).pad(.12), { duration: .7 });
+}
+
+async function drawAgencyOfferRoutes() {
+  offerRouteLayer.clearLayers();
+  if (!myAgency) return;
+  try {
+    const payload = await api(`/api/board/agency/${myAgency}/offer-routes`);
+    payload.routes.filter(route => route.available && route.geometry).forEach(route => {
+      const layer = L.geoJSON(route.geometry, { style: {
+        color: themeColor("--c-supplier"), weight: 4, opacity: .95, className: "route-leg1",
+      }}).bindTooltip(`<b>New offer: ${route.supplier_name}</b><div class="tip-k">collector → pickup → ${route.hotspot_name}<br>${Number(route.distance_miles).toFixed(1)} OSRM road mi · ${Math.round(route.duration_minutes)} min</div>`, { className: "hs-tip" });
+      offerRouteLayer.addLayer(layer);
+      addSimulationArrows(route.geometry, themeColor("--c-supplier"), offerRouteLayer);
+    });
+  } catch (_) { /* baseline routes remain visible if live OSRM is unavailable */ }
+}
+
+function focusSimulationRoute(routeId) {
+  const route = simulationRoutes.find(item => item.route_id === routeId);
+  if (!route) return;
+  drawSimulationRoutes([route], true);
+  const bounds = L.latLngBounds(route.stops.map(stop => [stop.lat, stop.lon]));
+  if (bounds.isValid()) map.flyToBounds(bounds.pad(.15), { duration: .7 });
+  document.querySelectorAll(".sim-route-card").forEach(card =>
+    card.classList.toggle("active", card.dataset.routeId === routeId));
+  $("simRestore").hidden = false;
+}
+
+function renderSimulationPanel(method) {
+  const assigned = simulationAssigned;
+  const truckMiles = simulationRoutes.reduce((sum, route) => sum + Number(route.distance_miles || 0), 0);
+  const deliveryStops = simulationRoutes.flatMap(route => route.stops || []).filter(stop => stop.stop_type === "hotspot");
+  const weightedDistance = deliveryStops.reduce((sum, stop) => sum + Number(stop.meals_delivered || 0) * Number(stop.meal_distance_from_pickup_miles || 0), 0);
+  const weightedTransit = deliveryStops.reduce((sum, stop) => sum + Number(stop.meals_delivered || 0) * Number(stop.meal_transit_from_pickup_minutes || 0), 0);
+  const hotspots = new Set(simulationAllocations.map(row => row.hotspot_block_id)).size;
+  const suppliers = new Set(simulationAllocations.map(row => row.business_id)).size;
+  const p95 = weightedTransitPercentile(deliveryStops, .95);
+  const maxTransit = deliveryStops.length ? Math.max(...deliveryStops.map(stop => Number(stop.meal_transit_from_pickup_minutes || 0))) : 0;
+  const cards = simulationRoutes.map(route => `<article class="sim-route-card" data-route-id="${route.route_id}">
+    <div class="sim-route-head"><b>Truck ${String(route.truck_sequence).padStart(3, "0")}</b><span>${Number(route.distance_miles).toFixed(1)} mi · ${Math.round(route.duration_minutes)} min</span></div>
+    <div class="sim-route-path"><b>${route.agency_name}</b><span>→ pickup</span><b>${route.supplier_name}</b><span>→ ${route.hotspot_count} hotspots</span></div>
+    <div class="sim-route-metrics"><span>${Number(route.meals_loaded).toFixed(1)} meals</span><span>${Number(route.meals_per_truck_mile).toFixed(2)} meals/mi</span></div>
+    <details><summary>Stop-by-stop route</summary><ol>${(route.stops || []).map(stop => `<li><i>${stop.stop_sequence}</i><span><b>${stop.stop_name}</b>${stop.stop_type === "hotspot" ? `<small>${Number(stop.meals_delivered).toFixed(1)} meals · ${Number(stop.meal_distance_from_pickup_miles).toFixed(1)} mi · ${Math.round(stop.meal_transit_from_pickup_minutes)} min</small>` : `<small>${stop.stop_type}</small>`}</span></li>`).join("")}</ol></details>
+  </article>`).join("");
+  const target = $("networkDetail");
+  target.innerHTML = `<div class="result-body"><div class="rb-eyebrow">${simulationMethodName(method)}</div>
+    <div class="rb-source">Live suppliers · sequential OSRM road routes</div>
+    <div class="sim-kpis">
+      <div><b>${truckMiles.toFixed(1)}</b><span>truck miles</span></div><div><b>${truckMiles ? (assigned / truckMiles).toFixed(2) : "0"}</b><span>meals / mile</span></div>
+      <div><b>${assigned ? (weightedDistance / assigned).toFixed(1) : "0"} mi</b><span>avg meal distance</span></div><div><b>${assigned ? (weightedTransit / assigned).toFixed(0) : "0"} min</b><span>avg transit</span></div>
+      <div><b>${p95.toFixed(0)} min</b><span>P95 transit</span></div><div><b>${maxTransit.toFixed(0)} min</b><span>max transit</span></div>
+    </div>
+    <div class="rb-note">${assigned.toFixed(1)} meals · ${hotspots} hotspots · ${simulationAllocations.length} allocation arcs · ${simulationRoutes.length} truck trips · ${suppliers} suppliers.</div>
+    <div class="rb-h">Truck routes</div><div class="sim-route-list">${cards}</div></div>`;
+  target.querySelectorAll(".sim-route-card").forEach(card => card.addEventListener("click", event => {
+    if (!event.target.closest("details")) focusSimulationRoute(card.dataset.routeId);
+  }));
+}
+
+async function runSimulation() {
+  const method = "route_optimized";
+  const show = role === "agency";
+  $("simRegenerate").disabled = true;
+  $("simStatus").textContent = `Syncing live reports and running ${simulationMethodName(method)}…`;
+  try {
+    if (show) simulationLayer.clearLayers();
+    simulationRoutes = [];
+    simulationAllocations = [];
+    simulationAssigned = 0;
+    if (show) {
+      $("resultBody").hidden = true;
+      $("resultBody").innerHTML = "";
+      $("resultEmpty").style.display = "";
+      $("resultEmpty").innerHTML = `<div class="re-icon">&#8635;</div><p>Updating the live road network and smart matches…</p>`;
+    }
+    const payload = await api(`/api/board/simulation/${method}?refresh=${Date.now()}`, {
+      method: "POST", cache: "no-store",
+    });
+    simulationAllocations = payload.allocations || [];
+    simulationRoutes = payload.routes || [];
+    simulationAssigned = simulationAllocations.reduce((sum, row) => sum + Number(row.meals_allocated || 0), 0);
+    if (show) { drawSimulationRoutes(simulationRoutes); renderSimulationPanel(method); }
+    $("simRestore").hidden = true;
+    $("simStatus").textContent = `${simulationMethodName(method)} · ${payload.synced.suppliers} live suppliers · ${simulationRoutes.length} truck trips`;
+  } catch (error) {
+    $("simStatus").textContent = `Simulation failed: ${error.message}`;
+    if (show) $("resultEmpty").innerHTML = `<div class="re-icon">&#9888;</div><p>Live network update failed.<br>${error.message}</p>`;
+  } finally { $("simRegenerate").disabled = false; }
+}
+
+async function loadLiveNetwork() {
+  const payload = await api("/api/board/network?method=route_optimized");
+  simulationAllocations = payload.allocations || [];
+  simulationRoutes = payload.routes || [];
+  simulationAssigned = simulationAllocations.reduce((sum, row) => sum + Number(row.meals_allocated || 0), 0);
+  drawSimulationRoutes(simulationRoutes);
+  renderSimulationPanel(payload.method);
+  $("simStatus").textContent = `${payload.activeSuppliers} active suppliers · ${payload.activeAgencies} agencies · live road network`;
+}
+
 /* ------------------------------------------------------------------- boot */
 (async function boot() {
   setThemeButton();
   wireForm();          /* static elements — wire before the first fetch, or
                           the visible button swallows an early click */
   wireRoles();
+  $("forecastBtn").addEventListener("click", toggleForecast);
+  $("simRegenerate").addEventListener("click", runSimulation);
+  $("simRestore").addEventListener("click", () => {
+    drawSimulationRoutes(simulationRoutes);
+    renderSimulationPanel("route_optimized");
+    $("simRestore").hidden = true;
+  });
   try {
     await loadBoard();
   } catch (err) {
@@ -2074,5 +2189,7 @@ function wireRoles() {
   }
   buildLayers();
   setRole("agency");
+  try { await loadLiveNetwork(); }
+  catch (error) { $("simStatus").textContent = `Network unavailable: ${error.message}`; }
   $("ledgerCount").textContent = tonight.length;
 })();

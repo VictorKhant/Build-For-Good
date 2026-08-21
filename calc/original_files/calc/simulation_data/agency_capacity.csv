@@ -1,0 +1,6 @@
+scenario_id,agency_id,agency_name,address,lat,lon,usable_for_routing,accepts_prepared,capacity_meals_per_day,capacity_food_lbs_per_day,vehicle_count,max_routes_per_day,capacity_period,is_synthetic,capacity_source
+planning_demo_v1,agency_jacobs_cushman_san_diego_food_bank,Jacobs & Cushman San Diego Food Bank,9850 Distribution Ave,32.8853,-117.1497,True,unknown,650,780.0,2,4,day,True,planning assumption; replace with agency-confirmed capacity
+planning_demo_v1,agency_feeding_san_diego,Feeding San Diego,9477 Waples St Ste 100,32.893,-117.178,True,yes,750,900.0,3,6,day,True,planning assumption; replace with agency-confirmed capacity
+planning_demo_v1,agency_feeding_san_diego_south_bay,Feeding San Diego (South Bay),567 South 38th St,32.6996,-117.104,True,yes,500,600.0,2,4,day,True,planning assumption; replace with agency-confirmed capacity
+planning_demo_v1,agency_a_b_jones_co,A.B. Jones & Co.,(no fixed site),,,False,unknown,350,420.0,2,4,day,True,planning assumption; replace with agency-confirmed capacity
+planning_demo_v1,agency_catholic_charities_diocese_of_san_diego,Catholic Charities Diocese of San Diego,4575 Mission Gorge Place,32.7846,-117.0995,True,unknown,300,360.0,1,3,day,True,planning assumption; replace with agency-confirmed capacity

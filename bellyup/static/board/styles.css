@@ -22,8 +22,8 @@
   --c-agency: #2a78d6;
   --c-pantry: #4a3aa7;
   --c-route: #0e8f63;
-  --c-emerging: #c9660a;   /* a cluster growing fast -- where need is headed */
-  --c-cooling: #2f7bbf;    /* a cluster fading -- currently real, not a forecast */
+  --c-emerging: #c9660a;
+  --c-cooling: #2f7bbf;
   --good: #006300;
   --bad: #d03b3b;
 
@@ -102,8 +102,7 @@ button { font: inherit; color: inherit; cursor: pointer; }
   padding: 8px 13px;
   font-weight: 600;
   font-size: 13px;
-  white-space: nowrap;
-  transition: border-color .15s, background .15s, color .15s;
+  transition: border-color .15s;
 }
 .btn-ledger:hover { border-color: var(--c-route); }
 .btn-ledger.on {
@@ -404,6 +403,13 @@ button { font: inherit; color: inherit; cursor: pointer; }
   overflow-y: auto;
   min-height: 0;
 }
+body[data-role="agency"] .result {
+  display: grid; grid-template-rows: auto minmax(0, 1fr) minmax(0, 1fr);
+  overflow: hidden;
+}
+.network-detail, .offer-detail { min-height: 0; overflow-y: auto; }
+.network-detail { border-bottom: 1px solid var(--line); }
+.offer-detail { position: relative; }
 .result-empty { padding: 48px 30px; text-align: center; color: var(--muted); }
 .re-icon { font-size: 34px; margin-bottom: 14px; color: var(--ink-2); }
 .result-empty strong { color: var(--ink-2); }
@@ -1184,3 +1190,61 @@ body.ledger-open { overflow: hidden; }
   color: var(--muted);
   background: color-mix(in srgb, var(--muted) 16%, transparent);
 }
+
+/* Global optimization controls and sequential truck-route results. */
+.sim-panel {
+  position: sticky; top: 0; z-index: 20;
+  padding: 14px 16px; border-bottom: 1px solid var(--line);
+  background: color-mix(in srgb, var(--surface) 94%, transparent);
+  backdrop-filter: blur(10px);
+}
+.sim-title { color: var(--c-route); font-size: 11px; font-weight: 800; letter-spacing: .14em; text-transform: uppercase; }
+.sim-live { margin-top: 7px; color: var(--ink); font-weight: 700; font-size: 12px; }
+.sim-live span { display: inline-block; width: 7px; height: 7px; margin-right: 6px; border-radius: 50%; background: var(--c-route); box-shadow: 0 0 0 4px color-mix(in srgb, var(--c-route) 16%, transparent); }
+.sim-controls { display: grid; grid-template-columns: 1fr auto; gap: 7px; margin-top: 9px; }
+.sim-controls select, .sim-controls button {
+  min-width: 0; border: 1px solid var(--line); border-radius: 8px;
+  padding: 8px 9px; background: var(--surface-2); color: var(--ink); font-size: 11.5px;
+}
+.sim-controls #simRun { background: var(--c-route); border-color: var(--c-route); color: white; font-weight: 700; }
+.sim-controls #simRun:disabled { opacity: .55; cursor: wait; }
+.sim-controls .sim-restore { grid-column: 1 / -1; color: var(--c-route); }
+.sim-status { margin-top: 7px; color: var(--muted); font-size: 10.5px; line-height: 1.35; }
+.sim-panel > .sim-restore { width: 100%; margin-top: 8px; padding: 7px; border: 1px solid var(--c-route); border-radius: 8px; background: transparent; color: var(--c-route); font-size: 10.5px; }
+.sim-regenerate { width: 100%; margin-top: 8px; padding: 8px; border: 1px solid var(--c-route); border-radius: 8px; background: var(--c-route); color: white; font-size: 10.5px; font-weight: 700; }
+.sim-regenerate:disabled { opacity: .55; cursor: wait; }
+.sim-kpis { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 7px; margin: 13px 0; }
+.sim-kpis > div { padding: 9px; border: 1px solid var(--line); border-radius: 9px; background: var(--surface-2); }
+.sim-kpis b { display: block; font: 700 17px "Space Grotesk", system-ui, sans-serif; font-variant-numeric: tabular-nums; }
+.sim-kpis span { display: block; margin-top: 2px; color: var(--muted); font-size: 9px; letter-spacing: .06em; text-transform: uppercase; }
+.sim-route-list { display: grid; gap: 8px; margin-top: 8px; }
+.sim-route-card { padding: 10px; border: 1px solid var(--line); border-radius: 10px; background: var(--surface-2); cursor: pointer; }
+.sim-route-card:hover, .sim-route-card.active { border-color: var(--c-route); }
+.sim-route-head, .sim-route-metrics { display: flex; justify-content: space-between; gap: 8px; font-size: 10.5px; }
+.sim-route-head span, .sim-route-metrics { color: var(--muted); }
+.sim-route-path { display: grid; gap: 2px; margin: 8px 0; font-size: 10.5px; }
+.sim-route-path span { color: var(--c-route); }
+.sim-route-card details { margin-top: 8px; font-size: 10.5px; }
+.sim-route-card summary { color: var(--c-route); }
+.sim-route-card ol { display: grid; gap: 6px; margin-top: 7px; list-style: none; }
+.sim-route-card li { display: flex; gap: 7px; align-items: flex-start; }
+.sim-route-card li i { flex: none; width: 18px; height: 18px; display: grid; place-items: center; border-radius: 50%; background: var(--c-route); color: white; font-style: normal; font-size: 9px; }
+.sim-route-card li small { display: block; color: var(--muted); }
+.sim-arrow { display: block; width: 16px; height: 16px; font-size: 14px; line-height: 16px; text-shadow: 0 0 3px var(--marker-ring); }
+.sim-stop { width: 22px; height: 22px; display: grid; place-items: center; border-radius: 50%; background: var(--c-route); color: white; border: 2px solid var(--marker-ring); font-size: 9px; font-weight: 800; box-shadow: 0 2px 5px rgba(0,0,0,.35); }
+.sim-stop.agency { background: var(--c-agency); }
+.sim-stop.supplier { background: var(--c-supplier); }
+.match-card { margin: 13px 0; padding: 12px; border: 1px solid color-mix(in srgb, var(--c-route) 50%, var(--line)); border-radius: 11px; background: color-mix(in srgb, var(--c-route) 7%, var(--surface-2)); }
+.match-card h3 { margin: 3px 0 10px; font-size: 14px; }
+.match-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 7px; }
+.match-grid span { padding: 7px; border-radius: 7px; background: var(--surface); color: var(--muted); font-size: 9px; text-transform: uppercase; }
+.match-grid b { display: block; color: var(--ink); font-size: 13px; text-transform: none; }
+.match-wait { margin-top: 9px; padding: 8px; border-radius: 7px; background: var(--surface); color: var(--c-route); font-size: 11px; }
+.match-card details { margin-top: 9px; font-size: 10.5px; }
+.match-card summary { color: var(--c-route); cursor: pointer; }
+.match-card ul { margin: 7px 0 0 17px; color: var(--muted); }
+.offer-match { margin: 8px 0; padding: 8px; border-radius: 7px; background: color-mix(in srgb, var(--c-route) 9%, var(--surface)); color: var(--muted); font-size: 10px; }
+.offer-match > b, .offer-match details summary { color: var(--c-route); }
+.offer-match ul { margin: 5px 0 0 16px; }
+.offer-count { margin-left: auto; min-width: 22px; padding: 2px 7px; border-radius: 999px; background: var(--c-supplier); color: white; text-align: center; font-size: 10px; font-weight: 800; }
+.offer-count.zero { background: var(--surface-3); color: var(--muted); }

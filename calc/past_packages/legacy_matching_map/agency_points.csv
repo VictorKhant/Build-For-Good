@@ -1,0 +1,6 @@
+agency_id,name,lat,lon,area,source_block_id,data_status
+agency_04TH_AV_CEDAR_ST_1,Food distribution agency proxy 1,32.7214559,-117.1615802,Cortez,04TH_AV_CEDAR_ST,block_centroid_proxy
+agency_09TH_AV_F_ST_1,Food distribution agency proxy 2,32.7131219,-117.1569871,East Village,09TH_AV_F_ST,block_centroid_proxy
+agency_09TH_AV_F_ST_2,Food distribution agency proxy 3,32.7131219,-117.1569871,East Village,09TH_AV_F_ST,block_centroid_proxy
+agency_I-5_SB_ISLAND_AV_1,Food distribution agency proxy 4,32.7099349,-117.1481553,East Village,I-5_SB_ISLAND_AV,block_centroid_proxy
+agency_SIGSBEE_ST_LOGAN_AV_1,Food distribution agency proxy 5,32.7039624,-117.1488414,Outside Perimeter,SIGSBEE_ST_LOGAN_AV,block_centroid_proxy
