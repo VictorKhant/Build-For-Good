@@ -9,6 +9,7 @@ L.tileLayer("https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png", {
 const baseLayer = L.layerGroup().addTo(map);
 const networkLayer = L.layerGroup().addTo(map);
 let suppliers = [], agencies = [], hotspots = [], allocations = [], vehicleRoutes = [];
+let activeMethod = "optimized", totalAssigned = 0;
 const supplierMarkers = new Map();
 
 async function table(name) {
@@ -79,12 +80,60 @@ function drawVehicleRoutes(routes, showStops=false) {
     L.geoJSON(route.geometry, {style:{color, weight:3.2, opacity:.75}})
       .bindTooltip(`${route.route_id} · ${route.hotspot_count} sequential stops · ${Number(route.distance_miles).toFixed(1)} mi`, {className:"hs-tip"})
       .addTo(networkLayer);
+    addRouteArrows(route.geometry, color);
     if (showStops) route.stops.forEach(stop => {
       L.circleMarker([stop.lat,stop.lon], {radius:stop.stop_type==="hotspot"?7:9,color,weight:2,fillColor:"#0d0d0d",fillOpacity:.9})
         .bindTooltip(`#${stop.stop_sequence} ${stop.stop_name}${stop.stop_type==="hotspot"?` · ${Number(stop.meals_delivered).toFixed(1)} meals`:""}`, {className:"hs-tip"})
         .addTo(networkLayer);
     });
   });
+}
+
+function addRouteArrows(geometry, color) {
+  const coordinates = geometry && geometry.coordinates;
+  if (!coordinates || coordinates.length < 2) return;
+  const interval = Math.max(10, Math.floor(coordinates.length / 7));
+  for (let i = interval; i < coordinates.length - 1; i += interval) {
+    const from = coordinates[i-1], to = coordinates[i];
+    const angle = Math.atan2(to[1]-from[1], to[0]-from[0]) * 180 / Math.PI;
+    L.marker([to[1],to[0]], {interactive:false, icon:L.divIcon({className:"", html:`<span class="route-arrow" style="color:${color};transform:rotate(${-angle}deg)">➤</span>`, iconSize:[16,16], iconAnchor:[8,8]})}).addTo(networkLayer);
+  }
+}
+
+function focusRoute(routeId) {
+  const route = vehicleRoutes.find(x => x.route_id === routeId);
+  if (!route) return;
+  drawVehicleRoutes([route], true);
+  const bounds = L.latLngBounds(route.stops.map(x => [x.lat, x.lon]));
+  map.flyToBounds(bounds.pad(.12), {duration:.7});
+  document.querySelectorAll(".route-card").forEach(x => x.classList.toggle("active", x.dataset.routeId === routeId));
+  $("restoreNetwork").hidden = false;
+}
+
+function renderRoutePanel(assigned) {
+  const routeMiles = vehicleRoutes.reduce((n,x)=>n+(x.distance_miles||0),0);
+  const routeMinutes = vehicleRoutes.reduce((n,x)=>n+(x.duration_minutes||0),0);
+  const uniqueHotspots = new Set(allocations.map(x=>x.hotspot_block_id)).size;
+  const uniqueSuppliers = new Set(allocations.map(x=>x.business_id)).size;
+  const cards = vehicleRoutes.map(route => {
+    const arcs = allocations.filter(x => x.agency_id === route.agency_id && x.business_id === route.supplier_id).length;
+    const itinerary = route.stops.map(stop => `<li><span class="stop-seq">${stop.stop_sequence}</span><span><b>${stop.stop_type}</b> · ${stop.stop_name}${stop.stop_type === "hotspot" ? ` <em>${Number(stop.meals_delivered).toFixed(1)} meals</em>` : ""}</span></li>`).join("");
+    return `<article class="route-card" data-route-id="${route.route_id}">
+      <div class="route-card-head"><span class="route-id">Truck ${String(route.truck_sequence).padStart(3,"0")}</span><span>${Number(route.distance_miles).toFixed(1)} mi · ${Math.round(route.duration_minutes)} min</span></div>
+      <div class="route-path"><b>${route.agency_name}</b><span>→ pickup</span><b>${route.supplier_name}</b><span>→ ${route.hotspot_count} hotspots</span></div>
+      <div class="route-metrics"><span><b>${Number(route.meals_loaded).toFixed(1)}</b> meals</span><span><b>${arcs}</b> alloc-arcs</span><span><b>${route.hotspot_count}</b> hotspots</span></div>
+      <details><summary>Show stop-by-stop itinerary</summary><ol class="stop-list">${itinerary}</ol></details>
+    </article>`;
+  }).join("");
+  const methodLabel = activeMethod === "optimized" ? "Global LP optimized" : "Greedy baseline";
+  $("resultBody").innerHTML = `<div class="rb-eyebrow">${methodLabel} · sequential routes</div><div class="rb-source">Capacity-constrained allocation + OSRM road paths</div>
+    <div class="network-kpis"><div><b>${routeMiles.toFixed(1)}</b><span>sequential miles</span></div><div><b>${assigned.toFixed(1)}</b><span>meals</span></div><div><b>${allocations.length}</b><span>alloc-arcs</span></div><div><b>${uniqueHotspots}</b><span>hotspots</span></div><div><b>${vehicleRoutes.length}</b><span>truck trips</span></div><div><b>${Math.round(routeMinutes)}</b><span>drive minutes</span></div></div>
+    <div class="rb-note">${uniqueSuppliers} suppliers are served. Each route is continuous: Agency → one Supplier pickup → hotspots in numbered order. Click a route card to isolate it on the map.</div>
+    <div class="rb-h">Truck routes</div><div class="route-list">${cards}</div>`;
+  document.querySelectorAll(".route-card").forEach(card => card.addEventListener("click", event => {
+    if (event.target.closest("details")) return;
+    focusRoute(card.dataset.routeId);
+  }));
 }
 
 function focusSupplier(id) {
@@ -105,19 +154,21 @@ function focusSupplier(id) {
 }
 
 async function runNetwork() {
-  $("runNetwork").disabled = true; $("apiStatus").textContent = "Running two-stage LP…";
+  activeMethod = $("methodSelect").value;
+  const methodLabel = activeMethod === "optimized" ? "Global LP" : "Greedy";
+  $("runNetwork").disabled = true; $("apiStatus").textContent = `Running ${methodLabel} simulation…`;
   const response = await fetch(`${API}/optimize/simulation`, {method:"POST"});
   if (!response.ok) throw new Error(await response.text());
-  const result = await fetch(`${API}/results/simulation/optimized?limit=5000`);
+  const result = await fetch(`${API}/results/simulation/${activeMethod}?limit=5000`);
   allocations = (await result.json()).rows;
-  const routeResult = await fetch(`${API}/routes/simulation`);
+  const routeResult = await fetch(`${API}/routes/simulation/${activeMethod}`);
   vehicleRoutes = (await routeResult.json()).routes;
   drawVehicleRoutes(vehicleRoutes);
-  const assigned = allocations.reduce((n,x)=>n+x.meals_allocated,0);
-  $("apiStatus").textContent = `Optimal · ${assigned.toFixed(1)} meals · ${vehicleRoutes.length} truck trips`;
+  const assigned = allocations.reduce((n,x)=>n+x.meals_allocated,0); totalAssigned = assigned;
+  $("apiStatus").textContent = `${methodLabel} · ${assigned.toFixed(1)} meals · ${vehicleRoutes.length} truck trips`;
   $("resultEmpty").style.display = "none"; $("resultBody").hidden = false;
-  const routeMiles = vehicleRoutes.reduce((n,x)=>n+(x.distance_miles||0),0);
-  $("resultBody").innerHTML = `<div class="rb-eyebrow">Sequential truck routes optimized</div><div class="rb-source">Capacity-constrained SQL simulation</div><div class="outcomes"><div class="oc oc-people"><div class="v">${assigned.toFixed(1)}</div><div class="k">people fed</div></div><div class="oc"><div class="v">${vehicleRoutes.length}</div><div class="k">truck trips</div></div><div class="oc"><div class="v">${routeMiles.toFixed(1)}</div><div class="k">route miles</div></div></div><div class="rb-note">Each colored line is one continuous OSRM road route: Agency → Supplier → Hotspot 1 → Hotspot 2 → … . Click a supplier to display numbered stops.</div>`;
+  renderRoutePanel(assigned);
+  $("restoreNetwork").hidden = true;
   $("runNetwork").disabled = false;
 }
 
@@ -131,4 +182,5 @@ async function init() {
   } catch (error) { $("apiStatus").textContent = `API error: ${error.message}`; }
 }
 $("runNetwork").onclick = () => runNetwork().catch(e => { $("apiStatus").textContent = `Error: ${e.message}`; $("runNetwork").disabled=false; });
+$("restoreNetwork").onclick = () => { drawVehicleRoutes(vehicleRoutes); renderRoutePanel(totalAssigned); $("restoreNetwork").hidden=true; };
 init();

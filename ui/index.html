@@ -33,7 +33,8 @@
       <h2>Tonight&rsquo;s surplus reports</h2>
       <p class="feed-sub">Voluntary end-of-day reports from food businesses.
         Click one to inspect its optimized network flow.</p>
-      <button class="run-network" id="runNetwork">Run global simulation</button>
+      <div class="simulation-controls"><select id="methodSelect"><option value="optimized">Global LP optimized</option><option value="greedy">Greedy baseline</option></select><button class="run-network" id="runNetwork">Run simulation</button></div>
+      <button class="restore-network" id="restoreNetwork" hidden>↺ Restore all routes</button>
       <div class="api-status" id="apiStatus">Connecting to BellyUp API…</div>
     </div>
     <div class="feed-list" id="feed"></div>

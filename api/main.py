@@ -35,7 +35,8 @@ PUBLIC_TABLES = {
     "standard_agency_summary", "standard_hotspot_summary",
     "simulation_baseline_allocations", "simulation_optimized_allocations",
     "simulation_agency_summary", "simulation_hotspot_summary",
-    "simulation_vehicle_routes", "simulation_vehicle_route_stops",
+    "simulation_greedy_vehicle_routes", "simulation_greedy_vehicle_route_stops",
+    "simulation_optimized_vehicle_routes", "simulation_optimized_vehicle_route_stops",
 }
 
 @app.get("/")
@@ -83,12 +84,13 @@ def optimize(mode: str) -> dict:
     if completed.returncode:
         raise HTTPException(status_code=500, detail=completed.stderr or completed.stdout)
     if mode == "simulation":
-        route_run = subprocess.run(
-            [sys.executable, str(PROJECT_ROOT / "optim" / "build_vehicle_routes.py")],
-            cwd=PROJECT_ROOT, capture_output=True, text=True,
-        )
-        if route_run.returncode:
-            raise HTTPException(status_code=500, detail=route_run.stderr or route_run.stdout)
+        for method in ("greedy", "optimized"):
+            route_run = subprocess.run(
+                [sys.executable, str(PROJECT_ROOT / "optim" / "build_vehicle_routes.py"), "--method", method],
+                cwd=PROJECT_ROOT, capture_output=True, text=True,
+            )
+            if route_run.returncode:
+                raise HTTPException(status_code=500, detail=route_run.stderr or route_run.stdout)
     output = PROJECT_ROOT / "optim" / "output"
     if mode == "simulation":
         output /= "simulation"
@@ -105,12 +107,16 @@ def results(mode: str, method: str, limit: int = Query(500, ge=1, le=5000)) -> d
     frame = read_table(table).head(limit)
     return {"mode": mode, "method": method, "total": len(read_table(table)), "rows": frame.where(frame.notna(), None).to_dict("records")}
 
-@app.get("/routes/simulation")
-def simulation_routes() -> dict:
-    if "simulation_vehicle_routes" not in table_names():
+@app.get("/routes/simulation/{method}")
+def simulation_routes(method: str) -> dict:
+    if method not in {"greedy", "optimized"}:
+        raise HTTPException(status_code=400, detail="method must be greedy or optimized")
+    route_table = f"simulation_{method}_vehicle_routes"
+    stop_table = f"simulation_{method}_vehicle_route_stops"
+    if route_table not in table_names():
         raise HTTPException(status_code=404, detail="Run simulation optimization first")
-    routes = read_table("simulation_vehicle_routes")
-    stops = read_table("simulation_vehicle_route_stops")
+    routes = read_table(route_table)
+    stops = read_table(stop_table)
     rows = []
     for route in routes.to_dict("records"):
         geometry = route.pop("geometry_geojson", None)
