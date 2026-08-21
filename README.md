@@ -6,8 +6,18 @@ The active implementation is the system-level allocation pipeline on the
 `Patrick` branch:
 
 - `dataset/`: authoritative source data
-- `calc/`: normalized inputs, OSRM route cache, calculation code, and archives
+- `calc/`: normalized inputs, simulation data, OSRM route cache, calculation code, and archives
 - `optim/`: LP code, baseline/optimized outputs, and organized review package
+- `api/`: FastAPI endpoints for SQL data, Greedy, global LP, and simulation runs
+
+Runtime data is stored in `calc/sql/bellyup.db`. Original CSV snapshots are
+preserved under `calc/original_files/`.
+
+Start the API and open Swagger at `http://127.0.0.1:8000/docs`:
+
+```bash
+python3 -m uvicorn api.main:app --reload --port 8000
+```
 
 Start with `optim/README.md`. The readable comparison is
 `optim/package/comparison/estimate_before_after.md`.

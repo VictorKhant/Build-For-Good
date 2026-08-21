@@ -3,8 +3,10 @@
 
 from __future__ import annotations
 
+import argparse
 import json
 from pathlib import Path
+import sys
 
 import numpy as np
 import pandas as pd
@@ -13,9 +15,13 @@ from scipy.sparse import coo_matrix, vstack
 
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
+from calc.database import read_table, write_table
 DATA = PROJECT_ROOT / "calc" / "optimization_data"
 ROUTES = PROJECT_ROOT / "calc" / "route_cache" / "route_matrix.csv"
-OUTPUT = PROJECT_ROOT / "optim" / "output"
+OUTPUT_BASE = PROJECT_ROOT / "optim" / "output"
+SIMULATION_DATA = PROJECT_ROOT / "calc" / "simulation_data"
 LBS_PER_MEAL = 1.2
 COST_PER_MILE = 0.76
 WAGE_PER_HOUR = 17.75
@@ -29,20 +35,44 @@ ALLOCATION_COLUMNS = [
 ]
 
 
-def load_inputs() -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, pd.DataFrame]:
-    donations = pd.read_csv(DATA / "demo_donation_reports.csv")
+def arguments() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument(
+        "--simulation", action="store_true",
+        help="Use calc/simulation_data supplier quantities and agency capacities.",
+    )
+    return parser.parse_args()
+
+
+def load_inputs(simulation: bool = False) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, pd.DataFrame]:
+    donations = read_table("donation_reports")
+    agencies = read_table("agencies")
+    if simulation:
+        supply = read_table("supplier_supply")
+        capacity = read_table("agency_capacity")
+        supply_by_donation = supply.set_index("donation_id")
+        missing_supply = set(donations.donation_id) - set(supply_by_donation.index)
+        if missing_supply:
+            raise ValueError(f"simulation supply is missing donations: {sorted(missing_supply)}")
+        donations["quantity_lbs"] = donations.donation_id.map(
+            supply_by_donation.available_food_lbs
+        )
+        agencies = agencies.drop(columns=["capacity_meals"], errors="ignore").merge(
+            capacity[["agency_id", "capacity_meals_per_day"]],
+            on="agency_id", how="left", validate="one_to_one",
+        ).rename(columns={"capacity_meals_per_day": "capacity_meals"})
     donations = donations[donations.status.eq("active")].copy()
     donations["available_meals"] = donations.quantity_lbs / LBS_PER_MEAL
     donations["window_minutes"] = (
         pd.to_datetime(donations.expires_at, utc=True)
         - pd.to_datetime(donations.ready_at, utc=True)
     ).dt.total_seconds() / 60
-    hotspots = pd.read_csv(DATA / "hotspots.csv")
+    hotspots = read_table("hotspots")
     hotspots = hotspots[hotspots.historical_demand.ge(1)].copy()
-    agencies = pd.read_csv(DATA / "agencies.csv")
-    routes = pd.read_csv(ROUTES)
+    routes = read_table("route_matrix")
     routes = routes[
-        routes.route_available.fillna(False) & routes.food_compatible.fillna(False)
+        routes.route_available.fillna(0).astype(bool)
+        & routes.food_compatible.fillna(0).astype(bool)
     ].copy()
     routes = routes.merge(
         donations[["donation_id", "available_meals", "window_minutes"]], on="donation_id"
@@ -69,35 +99,52 @@ def allocation_record(route: pd.Series, meals: float) -> dict:
 
 
 def greedy_baseline(
-    donations: pd.DataFrame, hotspots: pd.DataFrame, routes: pd.DataFrame
+    donations: pd.DataFrame, hotspots: pd.DataFrame, agencies: pd.DataFrame,
+    routes: pd.DataFrame, enforce_capacity: bool = False,
 ) -> pd.DataFrame:
     remaining_demand = hotspots.set_index("block_id").historical_demand.to_dict()
+    remaining_capacity = {
+        row.agency_id: (
+            float(row.capacity_meals)
+            if enforce_capacity and pd.notna(row.capacity_meals)
+            else float("inf")
+        )
+        for row in agencies.itertuples()
+    }
     allocations = []
     for donation in donations.sort_values(["reported_at", "donation_id"]).itertuples():
         candidates = routes[routes.donation_id.eq(donation.donation_id)].copy()
         if candidates.empty:
             continue
         agency_pickup = candidates.groupby("agency_id").agency_to_supplier_miles.min()
-        selected_agency = agency_pickup.sort_values(kind="stable").index[0]
-        candidates = candidates[candidates.agency_id.eq(selected_agency)].sort_values(
-            ["supplier_to_hotspot_miles", "hotspot_block_id"], kind="stable"
-        )
         remaining_meals = donation.available_meals
-        for _, route in candidates.iterrows():
-            unmet = remaining_demand.get(route.hotspot_block_id, 0.0)
-            allocated = min(remaining_meals, unmet)
-            if allocated <= ALLOCATION_EPS:
+        for selected_agency in agency_pickup.sort_values(kind="stable").index:
+            agency_remaining = remaining_capacity.get(selected_agency, float("inf"))
+            if agency_remaining <= ALLOCATION_EPS:
                 continue
-            allocations.append(allocation_record(route, allocated))
-            remaining_meals -= allocated
-            remaining_demand[route.hotspot_block_id] -= allocated
+            agency_candidates = candidates[candidates.agency_id.eq(selected_agency)].sort_values(
+                ["supplier_to_hotspot_miles", "hotspot_block_id"], kind="stable"
+            )
+            for _, route in agency_candidates.iterrows():
+                unmet = remaining_demand.get(route.hotspot_block_id, 0.0)
+                allocated = min(remaining_meals, agency_remaining, unmet)
+                if allocated <= ALLOCATION_EPS:
+                    continue
+                allocations.append(allocation_record(route, allocated))
+                remaining_meals -= allocated
+                agency_remaining -= allocated
+                remaining_capacity[selected_agency] -= allocated
+                remaining_demand[route.hotspot_block_id] -= allocated
+                if remaining_meals <= ALLOCATION_EPS or agency_remaining <= ALLOCATION_EPS:
+                    break
             if remaining_meals <= ALLOCATION_EPS:
                 break
     return pd.DataFrame(allocations, columns=ALLOCATION_COLUMNS)
 
 
 def global_optimization(
-    donations: pd.DataFrame, hotspots: pd.DataFrame, routes: pd.DataFrame
+    donations: pd.DataFrame, hotspots: pd.DataFrame, agencies: pd.DataFrame,
+    routes: pd.DataFrame, enforce_capacity: bool = False,
 ) -> tuple[pd.DataFrame, dict]:
     routes = routes.reset_index(drop=True)
     donation_ids = list(donations.donation_id)
@@ -109,7 +156,19 @@ def global_optimization(
         row_indexes.extend([donation_index[route.donation_id], hotspot_index[route.hotspot_block_id]])
         column_indexes.extend([column, column])
         values.extend([1.0, 1.0])
-    constraint_count = len(donation_ids) + len(hotspot_ids)
+    agency_capacity = agencies.dropna(subset=["capacity_meals"]) if enforce_capacity else agencies.iloc[0:0]
+    agency_ids = list(agency_capacity.agency_id)
+    agency_index = {
+        value: i + len(donation_ids) + len(hotspot_ids)
+        for i, value in enumerate(agency_ids)
+    }
+    if agency_ids:
+        for column, route in routes.iterrows():
+            if route.agency_id in agency_index:
+                row_indexes.append(agency_index[route.agency_id])
+                column_indexes.append(column)
+                values.append(1.0)
+    constraint_count = len(donation_ids) + len(hotspot_ids) + len(agency_ids)
     matrix = coo_matrix(
         (values, (row_indexes, column_indexes)), shape=(constraint_count, len(routes))
     ).tocsr()
@@ -117,6 +176,7 @@ def global_optimization(
         [
             donations.set_index("donation_id").loc[donation_ids].available_meals.to_numpy(),
             hotspots.set_index("block_id").loc[hotspot_ids].historical_demand.to_numpy(),
+            agency_capacity.set_index("agency_id").loc[agency_ids].capacity_meals.to_numpy(),
         ]
     )
 
@@ -149,6 +209,7 @@ def global_optimization(
         "stage2_objective_meal_miles": float(np.sum(objective * stage2.x)),
         "stage1_status": stage1.message,
         "stage2_status": stage2.message,
+        "agency_capacity_enforced": enforce_capacity,
     }
     return pd.DataFrame(allocations, columns=ALLOCATION_COLUMNS), diagnostics
 
@@ -202,7 +263,7 @@ def zero_if_noise(value: float, tolerance: float = 1e-5) -> float:
 
 def write_summaries(
     baseline: pd.DataFrame, optimized: pd.DataFrame, agencies: pd.DataFrame,
-    hotspots: pd.DataFrame,
+    hotspots: pd.DataFrame, output: Path,
 ) -> None:
     agency_rows = []
     for agency in agencies.itertuples():
@@ -220,7 +281,7 @@ def write_summaries(
                 "utilization": rows.meals_allocated.sum() / capacity if pd.notna(capacity) else None,
             }
         )
-    pd.DataFrame(agency_rows).to_csv(OUTPUT / "agency_summary.csv", index=False)
+    pd.DataFrame(agency_rows).to_csv(output / "agency_summary.csv", index=False)
 
     baseline_served = baseline.groupby("hotspot_block_id").meals_allocated.sum()
     optimized_served = optimized.groupby("hotspot_block_id").meals_allocated.sum()
@@ -231,16 +292,23 @@ def write_summaries(
     summary["optimized_served"] = summary.block_id.map(optimized_served).fillna(0)
     summary["baseline_unmet"] = (summary.original_demand - summary.baseline_served).clip(lower=0)
     summary["optimized_unmet"] = (summary.original_demand - summary.optimized_served).clip(lower=0)
-    summary.to_csv(OUTPUT / "hotspot_summary.csv", index=False)
+    summary.to_csv(output / "hotspot_summary.csv", index=False)
 
 
 def main() -> None:
-    OUTPUT.mkdir(exist_ok=True)
-    donations, hotspots, agencies, routes = load_inputs()
-    baseline = greedy_baseline(donations, hotspots, routes)
-    optimized, diagnostics = global_optimization(donations, hotspots, routes)
-    baseline.to_csv(OUTPUT / "baseline_allocations.csv", index=False)
-    optimized.to_csv(OUTPUT / "optimized_allocations.csv", index=False)
+    args = arguments()
+    output = OUTPUT_BASE / "simulation" if args.simulation else OUTPUT_BASE
+    output.mkdir(parents=True, exist_ok=True)
+    donations, hotspots, agencies, routes = load_inputs(args.simulation)
+    baseline = greedy_baseline(donations, hotspots, agencies, routes, args.simulation)
+    optimized, diagnostics = global_optimization(
+        donations, hotspots, agencies, routes, args.simulation
+    )
+    baseline.to_csv(output / "baseline_allocations.csv", index=False)
+    optimized.to_csv(output / "optimized_allocations.csv", index=False)
+    suffix = "simulation" if args.simulation else "standard"
+    write_table(f"{suffix}_baseline_allocations", baseline)
+    write_table(f"{suffix}_optimized_allocations", optimized)
 
     before = metrics(baseline, donations, hotspots)
     after = metrics(optimized, donations, hotspots)
@@ -267,14 +335,20 @@ def main() -> None:
             "lbs_per_meal": LBS_PER_MEAL,
             "cost_per_mile": COST_PER_MILE,
             "wage_per_hour": WAGE_PER_HOUR,
-            "agency_capacity": "not enforced; authoritative capacity absent",
             "donations": "synthetic reports tied to real main business IDs",
             "candidate_hotspot_threshold": "historical_demand >= 1, aligned with Oscar UI",
             "agency_demo_geocodes": "three missing main coordinates use explicitly synthetic Oscar UI geocodes",
+            "simulation_mode": args.simulation,
+            "agency_capacity": (
+                "enforced from calc/simulation_data/agency_capacity.csv"
+                if args.simulation else "not enforced; authoritative capacity absent"
+            ),
         },
     }
-    (OUTPUT / "comparison.json").write_text(json.dumps(comparison, indent=2), encoding="utf-8")
-    write_summaries(baseline, optimized, agencies, hotspots)
+    (output / "comparison.json").write_text(json.dumps(comparison, indent=2), encoding="utf-8")
+    write_summaries(baseline, optimized, agencies, hotspots, output)
+    write_table(f"{suffix}_agency_summary", pd.read_csv(output / "agency_summary.csv"))
+    write_table(f"{suffix}_hotspot_summary", pd.read_csv(output / "hotspot_summary.csv"))
     print(json.dumps(comparison, indent=2))
 
 

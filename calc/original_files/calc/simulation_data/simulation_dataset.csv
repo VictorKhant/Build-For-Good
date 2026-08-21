@@ -1,0 +1,20 @@
+scenario_id,entity_type,entity_id,entity_name,lat,lon,available_food_lbs,available_meals,capacity_food_lbs_per_day,capacity_meals_per_day,vehicle_count,max_routes_per_day,is_synthetic
+planning_demo_v1,supplier,biz_scripps_mercy_hospital_san_diego,Scripps Mercy Hospital San Diego,32.748,-117.16,129.0,107.5,,,,,True
+planning_demo_v1,supplier,biz_northgate_gonzalez_market,Northgate Gonzalez Market,32.6935,-117.1445,332.0,276.6666666666667,,,,,True
+planning_demo_v1,supplier,biz_springhill_suites_san_diego_downtown_bayfront,SpringHill Suites San Diego Downtown/Bayfront,32.7125,-117.1728,50.0,41.66666666666667,,,,,True
+planning_demo_v1,supplier,biz_manchester_grand_hyatt_san_diego,Manchester Grand Hyatt San Diego,32.7065,-117.171,288.0,240.0,,,,,True
+planning_demo_v1,supplier,biz_albertsons_14th_market,Albertsons - 14th & Market,32.7105,-117.15,266.0,221.66666666666669,,,,,True
+planning_demo_v1,supplier,biz_smart_final,Smart & Final,32.7115,-117.149,258.0,215.0,,,,,True
+planning_demo_v1,supplier,biz_embassy_suites_by_hilton_san_diego_bay_downtown,Embassy Suites by Hilton San Diego Bay Downtown,32.7112,-117.1705,64.0,53.333333333333336,,,,,True
+planning_demo_v1,supplier,biz_ralphs_hillcrest,Ralphs - Hillcrest,32.7488,-117.1547,269.0,224.16666666666669,,,,,True
+planning_demo_v1,supplier,biz_courtyard_by_marriott_san_diego_downtown,Courtyard by Marriott San Diego Downtown,32.7153,-117.1592,49.0,40.833333333333336,,,,,True
+planning_demo_v1,supplier,biz_uc_san_diego_health_hillcrest_medical_center,UC San Diego Health - Hillcrest Medical Center,32.755,-117.1665,86.0,71.66666666666667,,,,,True
+planning_demo_v1,supplier,biz_sheraton_san_diego_resort_sheraton_san_diego_hotel_marina,Sheraton San Diego Resort (Sheraton San Diego Hotel & Marina),32.7265,-117.202,134.0,111.66666666666667,,,,,True
+planning_demo_v1,supplier,biz_hard_rock_hotel_san_diego,Hard Rock Hotel San Diego,32.7075,-117.1597,61.0,50.833333333333336,,,,,True
+planning_demo_v1,supplier,biz_the_westin_san_diego_bayview,The Westin San Diego Bayview,32.7168,-117.1678,58.0,48.333333333333336,,,,,True
+planning_demo_v1,supplier,biz_the_us_grant_a_luxury_collection_hotel,"The US Grant, a Luxury Collection Hotel",32.7155,-117.1612,49.0,40.833333333333336,,,,,True
+planning_demo_v1,agency,agency_jacobs_cushman_san_diego_food_bank,Jacobs & Cushman San Diego Food Bank,32.8853,-117.1497,,,780.0,650.0,2.0,4.0,True
+planning_demo_v1,agency,agency_feeding_san_diego,Feeding San Diego,32.893,-117.178,,,900.0,750.0,3.0,6.0,True
+planning_demo_v1,agency,agency_feeding_san_diego_south_bay,Feeding San Diego (South Bay),32.6996,-117.104,,,600.0,500.0,2.0,4.0,True
+planning_demo_v1,agency,agency_a_b_jones_co,A.B. Jones & Co.,,,,,420.0,350.0,2.0,4.0,True
+planning_demo_v1,agency,agency_catholic_charities_diocese_of_san_diego,Catholic Charities Diocese of San Diego,32.7846,-117.0995,,,360.0,300.0,1.0,3.0,True

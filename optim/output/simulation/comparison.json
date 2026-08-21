@@ -9,13 +9,13 @@
     "unmet_demand": 0.0,
     "food_utilization_pct": 53.813664596273306,
     "hotspots_served": 161,
-    "total_route_distance": 939.9569016941064,
-    "average_route_distance": 5.662390974060882,
-    "meals_per_mile": 0.9985564213724473,
-    "total_meal_miles": 5087.54312088238,
-    "allocation_route_count": 166,
-    "total_route_duration_minutes": 1845.6,
-    "transport_cost": 1260.357245287521,
+    "total_route_distance": 1345.544706414539,
+    "average_route_distance": 8.009194681038922,
+    "meals_per_mile": 0.6975613634578365,
+    "total_meal_miles": 7581.686223082201,
+    "allocation_route_count": 168,
+    "total_route_duration_minutes": 2418.9016666666666,
+    "transport_cost": 1738.2057199306053,
     "food_value": null,
     "net_benefit": null,
     "route_distance_definition": "sum of full candidate-route miles for allocation arcs; no VRP consolidation"
@@ -30,13 +30,13 @@
     "unmet_demand": 0.0,
     "food_utilization_pct": 53.813664596273306,
     "hotspots_served": 161,
-    "total_route_distance": 803.414124015748,
-    "average_route_distance": 4.782226928665167,
-    "meals_per_mile": 1.1682642512040307,
-    "total_meal_miles": 4383.836488166011,
-    "allocation_route_count": 168,
-    "total_route_duration_minutes": 1528.0916666666667,
-    "transport_cost": 1062.6551856408573,
+    "total_route_distance": 1384.5342574365704,
+    "average_route_distance": 8.192510399032962,
+    "meals_per_mile": 0.6779174982190718,
+    "total_meal_miles": 6810.645481677935,
+    "allocation_route_count": 169,
+    "total_route_duration_minutes": 2377.7216666666673,
+    "transport_cost": 1755.6553620406826,
     "food_value": null,
     "net_benefit": null,
     "route_distance_definition": "sum of full candidate-route miles for allocation arcs; no VRP consolidation"
@@ -46,19 +46,19 @@
     "coverage_percentage_point_change": 0.0,
     "unmet_demand_reduction_pct": null,
     "food_utilization_change": 0.0,
-    "route_distance_change_pct": -14.526493441589086,
-    "meals_per_mile_change_pct": 16.99531705963411,
-    "meal_miles_change_pct": -13.83195416718785,
-    "transport_cost_change_pct": -15.686192179707156
+    "route_distance_change_pct": 2.897677857611034,
+    "meals_per_mile_change_pct": -2.8160770174238685,
+    "meal_miles_change_pct": -10.169779106089313,
+    "transport_cost_change_pct": 1.00388819976809
   },
   "optimization": {
     "solver": "scipy.optimize.linprog(method='highs')",
     "stage1_maximum_people_fed": 938.5999999999999,
     "stage2_people_fed": 938.5999999900005,
-    "stage2_objective_meal_miles": 4383.836488166011,
+    "stage2_objective_meal_miles": 6810.645481677934,
     "stage1_status": "Optimization terminated successfully. (HiGHS Status 7: Optimal)",
     "stage2_status": "Optimization terminated successfully. (HiGHS Status 7: Optimal)",
-    "agency_capacity_enforced": false
+    "agency_capacity_enforced": true
   },
   "assumptions": {
     "demand_field": "historical_demand (main hotspots.csv need)",
@@ -68,7 +68,7 @@
     "donations": "synthetic reports tied to real main business IDs",
     "candidate_hotspot_threshold": "historical_demand >= 1, aligned with Oscar UI",
     "agency_demo_geocodes": "three missing main coordinates use explicitly synthetic Oscar UI geocodes",
-    "simulation_mode": false,
-    "agency_capacity": "not enforced; authoritative capacity absent"
+    "simulation_mode": true,
+    "agency_capacity": "enforced from calc/simulation_data/agency_capacity.csv"
   }
 }
