@@ -271,6 +271,16 @@ def load_suppliers(hotspots=None) -> list[dict]:
 # --------------------------------------------------------------------------
 
 def load_agencies() -> list[dict]:
+    """Agencies from agencies.csv, split by whether they can actually collect.
+
+    `mobile_capable` is load-bearing. An agency with a vehicle can be sent to a
+    restaurant and on to a hotspot -- that is what a collector is. An agency
+    marked `no` is a fixed site that RECEIVES donations; giving it a box truck
+    would invent a fleet it does not have and quietly change every dispatch.
+
+    Both kinds are returned, tagged. Only `mobileCapable` ones become
+    collectors; the rest ride along as drop-off points on the map.
+    """
     out = []
     for a in _rows("agencies.csv"):
         name = a["agency_name"]
@@ -280,6 +290,12 @@ def load_agencies() -> list[dict]:
             geocode = "approximate_manual_demo"
         if not lon:
             continue     # transport-only, no fixed site to route from
+
+        # "unknown" is treated as capable: the five original agencies are the
+        # county's distribution networks, and two are only unknown because the
+        # roster did not say. A new row must say `no` to be a fixed site.
+        mobile = (a.get("mobile_capable") or "unknown").strip().lower() != "no"
+
         out.append({
             "id": name.split()[0].upper()[:4] + str(len(out)),
             "name": name,
@@ -288,8 +304,25 @@ def load_agencies() -> list[dict]:
             "acceptsPrepared": a["accepts_prepared"] == "yes",
             "note": a["note"],
             "geocode": geocode,
+            "mobileCapable": mobile,
+            "agencyType": (a.get("agency_type") or "").strip(),
+            "role": (a.get("role") or "").strip(),
+            "address": a.get("address", ""),
+            "phone": a.get("phone", ""),
         })
     return out
+
+
+def collecting_agencies(agencies=None) -> list[dict]:
+    """Only the agencies that can be dispatched to collect."""
+    agencies = load_agencies() if agencies is None else agencies
+    return [a for a in agencies if a.get("mobileCapable", True)]
+
+
+def dropoff_agencies(agencies=None) -> list[dict]:
+    """Fixed sites that receive donations but cannot go and get them."""
+    agencies = load_agencies() if agencies is None else agencies
+    return [a for a in agencies if not a.get("mobileCapable", True)]
 
 
 def load_pantries() -> list[dict]:
@@ -351,8 +384,11 @@ def load_history(suppliers=None, agencies=None, pantries=None,
     hist_lbs = {"grocery": (120, 420), "hotel": (30, 160),
                 "venue": (180, 600), "health": (60, 180),
                 "restaurant": (25, 120)}
+    # only agencies that can be dispatched -- a fixed drop-off site never
+    # drove anywhere, so it cannot appear in a delivery history either
     collectors = (
-        [{**a, "kind": "agency", "cap": C["AGENCY_CAPACITY_LBS"]} for a in agencies]
+        [{**a, "kind": "agency", "cap": C["AGENCY_CAPACITY_LBS"]}
+         for a in agencies if a.get("mobileCapable", True)]
         + [{**p, "kind": "pantry", "cap": C["PANTRY_CAPACITY_LBS"]}
            for p in pantries if p["whyNot"] != "serves home-bound individuals only"]
     )

@@ -595,12 +595,18 @@ details.model[open] summary { color: var(--ink-2); }
 .model-body em { color: var(--ink-2); font-style: normal; }
 
 /* ================================ ledger =============================== */
+/* Fully opaque, and no backdrop-filter.
+   The old rule blurred the whole viewport over a Leaflet map that still had
+   256 vector paths and the winning route's infinite dash animation painting
+   underneath, so every frame re-blurred everything. An opaque layer lets the
+   compositor skip the covered content entirely -- cheaper than blurring it,
+   and cheaper than hiding the map by hand, which costs a layout pass over a
+   large subtree each time the ledger opens. */
 .ledger {
   position: fixed;
   inset: 0;
   z-index: 2000;
-  background: color-mix(in srgb, var(--bg) 82%, transparent);
-  backdrop-filter: blur(7px);
+  background: var(--bg);
   overflow-y: auto;
 }
 .ledger-inner {
@@ -921,3 +927,19 @@ details.model[open] summary { color: var(--ink-2); }
 
 /* freshness bar in the score breakdown */
 .sv-fresh { background: var(--c-route); }
+
+/* the page behind must not scroll while the ledger is over it */
+body.ledger-open { overflow: hidden; }
+
+/* fixed drop-off sites: they receive donations but have no vehicle, so they
+   must not look like a dispatchable truck */
+.mk-dropoff {
+  width: 14px; height: 14px; border-radius: 4px;
+  background: var(--surface);
+  border: 2px solid var(--c-agency);
+  box-shadow: 0 0 0 1.5px var(--marker-ring);
+}
+.lg-dropoff {
+  width: 11px; height: 11px; border-radius: 3px; display: inline-block;
+  background: var(--surface); border: 2px solid var(--c-agency);
+}
