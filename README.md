@@ -52,8 +52,8 @@ cd bellyup
 pounds, what it is, a pickup window and an expiry. Click one to compute its
 dispatch.
 
-**Centre — the map.** 207 hotspot blocks sized by need, suppliers, agency HQs and
-mobile pantry sites. The match animates: it scans candidate blocks, shortlists,
+**Centre — the map.** 207 hotspot blocks sized by need, suppliers, agency HQs,
+fixed drop-off sites and mobile pantry sites. The match animates: it scans candidate blocks, shortlists,
 then locks a route.
 
 **Right — the recommendation.** The winning collector → pickup → hotspot triple,
@@ -109,6 +109,12 @@ preference for either.
 on: `PICKUP_WINDOW_MISSED`, `EXPIRES_BEFORE_SERVED`, `TRANSIT_TOO_LONG`,
 `BLOCK_NEED_MET`, `NO_PREPARED_HANDLING`.
 
+**`mobile_capable`** decides who can be dispatched. An agency with a vehicle can
+be sent to a restaurant and on to a hotspot. One marked `no` is a fixed site
+that receives donations — it is drawn as a hollow square rather than a truck,
+and never enters the collector pool. Giving it a box truck would invent a fleet
+it does not have.
+
 **Serving limits** come out of the ledger, and they answer two different
 questions. A block only holds so many people, so once its need is met further
 food there is food left on a pavement. And nobody sends five separate vans to
@@ -128,7 +134,7 @@ Read from `dataset/`. Sources and provenance in `README_DATA_PROVENANCE.md`;
 |---|---|---|
 | `hotspots.csv` | 382 | Blocks with need in person-equivalents, from the DSDP count |
 | `businesses.csv` | 31 + | Food businesses. **Self-registered restaurants are appended here** |
-| `agencies.csv` | 5 | Collection / redistribution agencies |
+| `agencies.csv` | 10 | Agencies. `mobile_capable` splits them: 4 collect, 5 receive at a fixed site |
 | `mobile_pantries.csv` | 14 | Distribution sites, with schedules |
 | `surplus_reports.csv` | — | Tonight's numbers, any supplier. Written by the app |
 | `opted_out_businesses.csv` | — | Businesses that left the platform. Written by the app |

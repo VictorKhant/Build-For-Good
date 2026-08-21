@@ -156,13 +156,23 @@ for (const h of HOTSPOTS) {
 
 /* agency HQ markers */
 const TRUCK_SVG = '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M3 5h11v9H3zM14 8h4l3 3v3h-7zM6 18a2 2 0 1 0 0-4 2 2 0 0 0 0 4zm11 0a2 2 0 1 0 0-4 2 2 0 0 0 0 4z"/></svg>';
+/* A truck only for agencies that can actually be dispatched. The rest are
+   fixed sites that receive donations -- drawing them with a truck would
+   promise a fleet they do not have. */
 for (const a of AGENCIES) {
+  const collects = a.mobileCapable !== false;
+  const html = collects
+    ? `<div class="mk-agency" id="col-${a.id}">${TRUCK_SVG}</div>`
+    : `<div class="mk-dropoff" id="col-${a.id}"></div>`;
   L.marker([a.lat, a.lon], {
-    icon: L.divIcon({ className: "", html: `<div class="mk-agency" id="col-${a.id}">${TRUCK_SVG}</div>`, iconSize: [26, 26], iconAnchor: [13, 13] }),
-    zIndexOffset: 500,
+    icon: L.divIcon({ className: "", html,
+      iconSize: collects ? [26, 26] : [14, 14],
+      iconAnchor: collects ? [13, 13] : [7, 7] }),
+    zIndexOffset: collects ? 500 : 300,
   }).addTo(baseLayer).bindTooltip(
     `<b>${a.name}</b><div class="tip-k">${a.program}` +
-    `<br>${a.acceptsPrepared ? "accepts prepared food" : "packaged/produce"}</div>`,
+    `<br>${a.acceptsPrepared ? "accepts prepared food" : "packaged/produce"}` +
+    (collects ? "" : "<br>fixed drop-off site — no collection vehicle") + `</div>`,
     { className: "hs-tip", direction: "top", opacity: 1 }
   );
 }
@@ -698,13 +708,23 @@ function renderLedger() {
   }).join("") : '<div class="served-empty">Nothing served yet tonight — every block is still in the pool.</div>';
 }
 
-function openLedger() { renderLedger(); $("ledger").hidden = false; }
+function openLedger() {
+  renderLedger();
+  $("ledger").hidden = false;
+  document.body.classList.add("ledger-open");
+}
+function closeLedger() {
+  $("ledger").hidden = true;
+  document.body.classList.remove("ledger-open");
+}
 $("ledgerBtn").addEventListener("click", openLedger);
-$("ledgerClose").addEventListener("click", () => { $("ledger").hidden = true; });
-$("ledger").addEventListener("click", e => { if (e.target === $("ledger")) $("ledger").hidden = true; });
-$("resetBtn").addEventListener("click", () => {
-  tonight = [];
-  saveTonight();
+$("ledgerClose").addEventListener("click", closeLedger);
+$("ledger").addEventListener("click", e => { if (e.target === $("ledger")) closeLedger(); });
+document.addEventListener("keydown", e => {
+  if (e.key === "Escape" && !$("ledger").hidden) closeLedger();
+});
+$("resetBtn").addEventListener("click", async () => {
+  await api("/api/board/ledger/reset", { method: "POST" });
   location.reload();
 });
 

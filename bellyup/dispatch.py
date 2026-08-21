@@ -152,8 +152,9 @@ def collectors(agencies: list[dict], pantries: list[dict]) -> list[dict]:
     Capacity is what separates them: a pantry van handles the nearby long tail,
     an agency truck handles bulk.
     """
+    # mobile_capable = no means a fixed drop-off site, not a fleet
     out = [{**a, "kind": "agency", "capacityLbs": C["AGENCY_CAPACITY_LBS"]}
-           for a in agencies]
+           for a in agencies if a.get("mobileCapable", True)]
     out += [{**p, "kind": "pantry", "capacityLbs": C["PANTRY_CAPACITY_LBS"]}
             for p in pantries if p["dispatchable"]]
     return out
