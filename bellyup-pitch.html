@@ -1,0 +1,877 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>BellyUp — Pitch Deck</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>🍲</text></svg>">
+
+<!-- Fonts: Fraunces (editorial serif display) + Work Sans (body) -->
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:ital,wght@0,600;0,700;0,900;1,600&family=Work+Sans:wght@400;500;600&display=swap" rel="stylesheet">
+
+<style>
+/* ===========================================
+   THEME — Vintage Editorial
+   Change these variables to restyle the deck
+   =========================================== */
+:root {
+    --cream: #f5f3ee;          /* page background */
+    --ink: #1a1a1a;            /* primary text */
+    --sub: #56524b;            /* secondary text */
+    --warm: #e8d4c0;           /* soft warm shape fill */
+    --tomato: #c44a2e;         /* accent — headlines, stats, progress */
+    --sage: #7c8a6e;           /* secondary accent for variety */
+
+    --font-display: 'Fraunces', serif;
+    --font-body: 'Work Sans', sans-serif;
+
+    --ease-out-expo: cubic-bezier(0.16, 1, 0.3, 1);
+    --duration-normal: 0.7s;
+}
+
+* { margin: 0; padding: 0; box-sizing: border-box; }
+
+body {
+    background: var(--cream);
+    color: var(--ink);
+    font-family: var(--font-body);
+}
+
+/* ===========================================
+   VIEWPORT FITTING: MANDATORY BASE STYLES
+   =========================================== */
+html, body { height: 100%; overflow-x: hidden; }
+html { scroll-snap-type: y mandatory; scroll-behavior: smooth; }
+
+.slide {
+    width: 100vw;
+    height: 100vh;
+    height: 100dvh;
+    overflow: hidden; /* CRITICAL: prevent any overflow */
+    scroll-snap-align: start;
+    display: flex;
+    flex-direction: column;
+    position: relative;
+}
+
+.slide-content {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    max-height: 100%;
+    overflow: hidden;
+    padding: var(--slide-padding);
+}
+
+:root {
+    --title-size: clamp(1.5rem, 5vw, 4rem);
+    --h2-size: clamp(1.25rem, 3.5vw, 2.5rem);
+    --h3-size: clamp(1rem, 2.5vw, 1.75rem);
+    --body-size: clamp(0.75rem, 1.5vw, 1.125rem);
+    --small-size: clamp(0.65rem, 1vw, 0.875rem);
+    --slide-padding: clamp(1rem, 4vw, 4rem);
+    --content-gap: clamp(0.5rem, 2vw, 2rem);
+    --element-gap: clamp(0.25rem, 1vw, 1rem);
+}
+
+.card, .container, .content-box { max-width: min(90vw, 1000px); max-height: min(80vh, 700px); }
+.feature-list, .bullet-list { gap: clamp(0.4rem, 1vh, 1rem); }
+.feature-list li, .bullet-list li { font-size: var(--body-size); line-height: 1.4; }
+.grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 250px), 1fr)); gap: clamp(0.5rem, 1.5vw, 1rem); }
+img, .image-container { max-width: 100%; max-height: min(50vh, 400px); object-fit: contain; }
+
+@media (max-height: 700px) {
+    :root {
+        --slide-padding: clamp(0.75rem, 3vw, 2rem);
+        --content-gap: clamp(0.4rem, 1.5vw, 1rem);
+        --title-size: clamp(1.25rem, 4.5vw, 2.5rem);
+        --h2-size: clamp(1rem, 3vw, 1.75rem);
+    }
+}
+@media (max-height: 600px) {
+    :root {
+        --slide-padding: clamp(0.5rem, 2.5vw, 1.5rem);
+        --content-gap: clamp(0.3rem, 1vw, 0.75rem);
+        --title-size: clamp(1.1rem, 4vw, 2rem);
+        --body-size: clamp(0.7rem, 1.2vw, 0.95rem);
+    }
+    .nav-dots, .keyboard-hint, .decorative { display: none; }
+}
+@media (max-height: 500px) {
+    :root {
+        --slide-padding: clamp(0.4rem, 2vw, 1rem);
+        --title-size: clamp(1rem, 3.5vw, 1.5rem);
+        --h2-size: clamp(0.9rem, 2.5vw, 1.25rem);
+        --body-size: clamp(0.65rem, 1vw, 0.85rem);
+    }
+}
+@media (max-width: 600px) {
+    :root { --title-size: clamp(1.25rem, 7vw, 2.5rem); }
+    .grid { grid-template-columns: 1fr; }
+}
+@media (prefers-reduced-motion: reduce) {
+    *, *::before, *::after { animation-duration: 0.01ms !important; transition-duration: 0.2s !important; }
+    html { scroll-behavior: auto; }
+}
+/* ============ end viewport base ============ */
+
+/* ===========================================
+   ANIMATIONS — reveal on slide entry
+   =========================================== */
+.reveal {
+    opacity: 0;
+    transform: translateY(28px);
+    transition: opacity var(--duration-normal) var(--ease-out-expo),
+                transform var(--duration-normal) var(--ease-out-expo);
+}
+.slide.visible .reveal { opacity: 1; transform: translateY(0); }
+.slide.visible .reveal:nth-child(1) { transition-delay: 0.05s; }
+.slide.visible .reveal:nth-child(2) { transition-delay: 0.15s; }
+.slide.visible .reveal:nth-child(3) { transition-delay: 0.25s; }
+.slide.visible .reveal:nth-child(4) { transition-delay: 0.35s; }
+.slide.visible .reveal:nth-child(5) { transition-delay: 0.45s; }
+.slide.visible .reveal:nth-child(6) { transition-delay: 0.55s; }
+
+/* ===========================================
+   EDITORIAL TYPOGRAPHY
+   =========================================== */
+.kicker {
+    font-size: clamp(0.62rem, 1.3vw, 0.8rem);
+    letter-spacing: 0.34em;
+    text-transform: uppercase;
+    color: var(--sub);
+    font-weight: 500;
+}
+.kicker::before {
+    content: "";
+    display: inline-block;
+    width: clamp(20px, 3vw, 36px);
+    height: 2px;
+    background: var(--tomato);
+    vertical-align: middle;
+    margin-right: 0.8em;
+}
+h1 {
+    font-family: var(--font-display);
+    font-weight: 900;
+    font-size: clamp(2.8rem, 9.5vw, 6.8rem);
+    line-height: 0.96;
+}
+h2 {
+    font-family: var(--font-display);
+    font-weight: 700;
+    font-size: clamp(1.5rem, min(4.4vw, 6.6vh), 3.2rem);
+    line-height: 1.04;
+    margin: clamp(0.4rem, 1.4vh, 0.9rem) 0;
+    max-width: 15em;
+}
+h1 em, h2 em { font-style: italic; font-weight: 600; color: var(--tomato); }
+p.lede {
+    font-size: clamp(0.85rem, min(1.85vw, 2.7vh), 1.15rem);
+    color: var(--sub);
+    line-height: 1.55;
+    max-width: 38em;
+}
+.slide-num {
+    position: absolute;
+    top: clamp(1rem, 3vh, 2.2rem);
+    right: clamp(1.2rem, 3.5vw, 2.6rem);
+    font-family: var(--font-display);
+    font-style: italic;
+    font-size: clamp(0.8rem, 1.6vw, 1rem);
+    color: var(--sub);
+    opacity: 0.75;
+}
+.footer-mark {
+    position: absolute;
+    bottom: clamp(0.9rem, 2.6vh, 1.8rem);
+    left: clamp(1.2rem, 3.5vw, 2.6rem);
+    font-size: clamp(0.58rem, 1.1vw, 0.72rem);
+    letter-spacing: 0.22em;
+    text-transform: uppercase;
+    color: var(--sub);
+    opacity: 0.65;
+}
+
+/* ===========================================
+   GEOMETRIC SHAPE MOTIF (abstract CSS only)
+   =========================================== */
+.shape { position: absolute; pointer-events: none; }
+.ring {
+    border: 2px solid var(--ink);
+    border-radius: 50%;
+    opacity: 0.12;
+    animation: drift 10s ease-in-out infinite alternate;
+}
+.blob {
+    background: var(--warm);
+    border-radius: 52% 48% 60% 40% / 55% 45% 55% 45%;
+    opacity: 0.5;
+    animation: drift 12s ease-in-out infinite alternate-reverse;
+}
+.dot-accent { background: var(--tomato); border-radius: 50%; }
+@keyframes drift { to { transform: translateY(-16px) rotate(3deg); } }
+
+/* ===========================================
+   COMPONENTS
+   =========================================== */
+/* Big hero statistic */
+.hero-stat {
+    font-family: var(--font-display);
+    font-weight: 900;
+    font-size: clamp(3.2rem, min(15vw, 21vh), 10.5rem);
+    line-height: 0.9;
+    color: var(--tomato);
+}
+/* Bordered editorial box */
+.ed-box {
+    border: 2px solid var(--ink);
+    padding: clamp(0.7rem, 2vh, 1.3rem) clamp(0.9rem, 2.4vw, 1.6rem);
+    max-width: min(88vw, 46em);
+}
+/* Stat card row */
+.stat-row {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(min(100%, 150px), 1fr));
+    gap: clamp(0.6rem, 1.6vw, 1.2rem);
+    max-width: min(90vw, 900px);
+}
+.stat-card {
+    border-top: 3px solid var(--tomato);
+    padding-top: clamp(0.4rem, 1.2vh, 0.8rem);
+}
+.stat-card .v {
+    font-family: var(--font-display);
+    font-weight: 900;
+    font-size: clamp(1.5rem, min(4.2vw, 5.6vh), 3rem);
+    line-height: 1;
+}
+.stat-card .k {
+    font-size: clamp(0.6rem, min(1.2vw, 1.75vh), 0.8rem);
+    color: var(--sub);
+    margin-top: 0.4em;
+    line-height: 1.4;
+}
+/* Numbered step flow */
+.steps { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 220px), 1fr)); gap: clamp(0.8rem, 2vw, 1.6rem); max-width: min(90vw, 980px); }
+.step .n {
+    font-family: var(--font-display);
+    font-style: italic;
+    font-weight: 600;
+    font-size: clamp(1.4rem, min(3.8vw, 5vh), 2.6rem);
+    color: var(--tomato);
+}
+.step h3 { font-family: var(--font-display); font-weight: 700; font-size: clamp(0.9rem, min(2vw, 2.7vh), 1.25rem); margin: 0.25em 0; }
+.step p { font-size: clamp(0.7rem, min(1.4vw, 2vh), 0.92rem); color: var(--sub); line-height: 1.5; }
+/* Editorial bullet list */
+.ed-list { list-style: none; max-width: min(88vw, 40em); display: flex; flex-direction: column; }
+.ed-list li {
+    padding-left: 1.6em;
+    position: relative;
+    font-size: clamp(0.8rem, min(1.65vw, 2.4vh), 1.08rem);
+    line-height: 1.5;
+    color: var(--ink);
+}
+.ed-list li::before {
+    content: "";
+    position: absolute;
+    left: 0; top: 0.55em;
+    width: 0.55em; height: 0.55em;
+    border-radius: 50%;
+    background: var(--tomato);
+}
+.ed-list li b { font-weight: 600; }
+.ed-list li .muted { color: var(--sub); }
+/* Two-column compare */
+.compare { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 280px), 1fr)); gap: clamp(0.8rem, 2vw, 1.5rem); max-width: min(90vw, 940px); }
+.compare .col { border: 2px solid var(--ink); padding: clamp(0.8rem, 2.2vh, 1.4rem) clamp(0.9rem, 2.2vw, 1.5rem); }
+.compare .col.alt { background: var(--warm); border-color: transparent; }
+.compare h3 { font-family: var(--font-display); font-weight: 700; font-size: clamp(1.05rem, 2.4vw, 1.55rem); }
+.compare .cap { font-family: var(--font-display); font-style: italic; color: var(--tomato); font-size: clamp(0.85rem, 1.8vw, 1.15rem); margin: 0.15em 0 0.5em; }
+.compare p { font-size: clamp(0.72rem, min(1.45vw, 2.1vh), 0.95rem); color: var(--sub); line-height: 1.55; }
+/* Formula display */
+.formula {
+    font-family: 'Fraunces', serif;
+    font-size: clamp(1rem, 2.6vw, 1.7rem);
+    line-height: 1.7;
+}
+.formula .var { font-style: italic; }
+.formula .op { color: var(--tomato); font-weight: 700; }
+.fine {
+    font-size: clamp(0.6rem, 1.15vw, 0.8rem);
+    color: var(--sub);
+    line-height: 1.6;
+    max-width: min(88vw, 46em);
+}
+/* Receipt mock */
+.receipt-mock {
+    background: #fffdf8;
+    border: 1px solid rgba(26,26,26,0.25);
+    box-shadow: 0 10px 30px rgba(26,26,26,0.12);
+    padding: clamp(0.8rem, 2.2vh, 1.4rem) clamp(1rem, 2.4vw, 1.7rem);
+    max-width: min(86vw, 30em);
+    font-family: 'Work Sans', sans-serif;
+    transform: rotate(-1.2deg);
+}
+.receipt-mock .rid { font-size: clamp(0.6rem, 1.2vw, 0.78rem); letter-spacing: 0.14em; color: var(--sub); }
+.receipt-mock .rrow {
+    display: flex; justify-content: space-between; gap: 1.5em;
+    font-size: clamp(0.72rem, 1.5vw, 0.95rem);
+    padding: 0.32em 0;
+    border-bottom: 1px dashed rgba(26,26,26,0.25);
+}
+.receipt-mock .rrow:last-child { border-bottom: none; font-weight: 600; }
+.receipt-mock .rrow .val { font-variant-numeric: tabular-nums; }
+.receipt-mock .rrow .val.good { color: var(--sage); font-weight: 600; }
+
+/* ===========================================
+   NAVIGATION CHROME
+   =========================================== */
+.progress-bar {
+    position: fixed; top: 0; left: 0;
+    height: 4px; width: 0;
+    background: var(--tomato);
+    z-index: 5000;
+    transition: width 0.2s ease;
+}
+.nav-dots {
+    position: fixed;
+    right: clamp(0.6rem, 1.6vw, 1.2rem);
+    top: 50%;
+    transform: translateY(-50%);
+    display: flex; flex-direction: column;
+    gap: clamp(0.35rem, 1vh, 0.6rem);
+    z-index: 5000;
+}
+.nav-dots button {
+    width: 9px; height: 9px;
+    border-radius: 50%;
+    border: 1.5px solid var(--ink);
+    background: transparent;
+    cursor: pointer;
+    opacity: 0.4;
+    transition: opacity 0.2s, background 0.2s, transform 0.2s;
+    padding: 0;
+}
+.nav-dots button.active { background: var(--tomato); border-color: var(--tomato); opacity: 1; transform: scale(1.25); }
+.keyboard-hint {
+    position: fixed;
+    bottom: clamp(0.7rem, 2vh, 1.2rem);
+    right: clamp(1rem, 2.5vw, 1.8rem);
+    font-size: clamp(0.55rem, 1vw, 0.7rem);
+    letter-spacing: 0.16em;
+    text-transform: uppercase;
+    color: var(--sub);
+    opacity: 0.55;
+    z-index: 5000;
+}
+
+/* ===========================================
+   INLINE EDITING (toggle: hover top-left or E)
+   =========================================== */
+.edit-hotzone {
+    position: fixed; top: 0; left: 0;
+    width: 80px; height: 80px;
+    z-index: 10000;
+    cursor: pointer;
+}
+.edit-toggle {
+    position: fixed; top: 14px; left: 14px;
+    width: 44px; height: 44px;
+    border-radius: 50%;
+    border: 2px solid var(--ink);
+    background: var(--cream);
+    font-size: 18px;
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 0.3s ease;
+    z-index: 10001;
+    cursor: pointer;
+}
+.edit-toggle.show, .edit-toggle.active { opacity: 1; pointer-events: auto; }
+.edit-toggle.active { background: var(--tomato); border-color: var(--tomato); }
+body.editing [contenteditable="true"]:hover { outline: 2px dashed var(--tomato); outline-offset: 3px; }
+body.editing [contenteditable="true"]:focus { outline: 2px solid var(--tomato); outline-offset: 3px; }
+.edit-badge {
+    position: fixed; top: 22px; left: 68px;
+    background: var(--tomato); color: var(--cream);
+    font-size: 11px; letter-spacing: 0.14em; text-transform: uppercase;
+    padding: 6px 12px; border-radius: 99px;
+    display: none;
+    z-index: 10001;
+}
+body.editing .edit-badge { display: block; }
+</style>
+</head>
+<body>
+
+<div class="progress-bar"></div>
+<nav class="nav-dots" aria-label="Slide navigation"></nav>
+<div class="keyboard-hint decorative">← → · space</div>
+
+<!-- Inline editing chrome -->
+<div class="edit-hotzone" title="Edit mode"></div>
+<button class="edit-toggle" id="editToggle" title="Edit mode (E) · Ctrl+S saves">✏️</button>
+<div class="edit-badge">Editing — click text · Ctrl+S to save</div>
+
+<!-- ============================================================
+     SLIDE 01 — TITLE
+     ============================================================ -->
+<section class="slide" style="align-items:center; justify-content:center;">
+    <div class="shape ring decorative" style="width:clamp(180px,26vw,340px);height:clamp(180px,26vw,340px);top:-8%;right:-6%;"></div>
+    <div class="shape blob decorative" style="width:clamp(220px,32vw,420px);height:clamp(140px,20vh,240px);top:60%;right:7%;"></div>
+    <div class="shape dot-accent decorative" style="width:clamp(14px,2vw,22px);height:clamp(14px,2vw,22px);bottom:17%;left:10%;"></div>
+    <div class="shape decorative" style="width:clamp(120px,18vw,240px);height:2px;background:var(--ink);opacity:.35;bottom:20%;left:12%;"></div>
+    <div class="slide-content" style="align-items:center;text-align:center;">
+        <div class="kicker reveal">A food supply coordination platform · San Diego</div>
+        <h1 class="reveal">Belly<em>Up</em></h1>
+        <p class="lede reveal" style="margin:0 auto;">Surplus food &rarr; the streets that need it.
+            Every closed kitchen has leftovers; every downtown block has a count.
+            We connect the two, one dispatch at a time.</p>
+        <div class="ed-box reveal" style="margin-top:clamp(1rem,3vh,2rem);font-size:clamp(0.72rem,1.5vw,0.92rem);letter-spacing:0.12em;text-transform:uppercase;">
+            Build For Good · August 2026</div>
+    </div>
+</section>
+
+<!-- ============================================================
+     SLIDE 02 — THE WASTE
+     ============================================================ -->
+<section class="slide">
+    <div class="slide-num">02 / 14</div>
+    <div class="shape ring decorative" style="width:clamp(160px,22vw,300px);height:clamp(160px,22vw,300px);bottom:-12%;left:-6%;"></div>
+    <div class="slide-content">
+        <div class="kicker reveal">The waste</div>
+        <div class="hero-stat reveal">30–40%</div>
+        <h2 class="reveal">of the US food supply is simply <em>thrown away.</em></h2>
+        <p class="lede reveal">That's 400 pounds per person, every year — and a lot of it
+            leaves restaurant kitchens still warm, the same evening someone a few blocks
+            over goes to sleep hungry.</p>
+    </div>
+    <div class="footer-mark">BellyUp · surplus → streets</div>
+</section>
+
+<!-- ============================================================
+     SLIDE 03 — THE NEED (ACCESS IS A SCHEDULE PROBLEM)
+     ============================================================ -->
+<section class="slide">
+    <div class="slide-num">03 / 14</div>
+    <div class="shape blob decorative" style="width:clamp(200px,28vw,380px);height:clamp(130px,18vh,220px);top:-6%;right:-4%;"></div>
+    <div class="slide-content">
+        <div class="kicker reveal">The need</div>
+        <h2 class="reveal">Being <em>near</em> food isn't the same as being <em>fed.</em></h2>
+        <div class="stat-row reveal" style="margin:clamp(0.6rem,2vh,1.4rem) 0;">
+            <div class="stat-card"><div class="v">57%</div><div class="k">of downtown need is "covered" — if you count any scheduled distribution nearby</div></div>
+            <div class="stat-card"><div class="v">32%</div><div class="k">is what's left when you require food available 5+ days a week</div></div>
+            <div class="stat-card"><div class="v">243</div><div class="k">person-equivalents have food access only monthly — or less</div></div>
+        </div>
+        <div class="ed-box reveal" style="font-size:clamp(0.78rem,1.6vw,1.02rem);line-height:1.55;">
+            <b>9th &amp; E, East Village.</b> 29.8 people counted, non-zero on all twelve street counts.
+            The nearest pantry is 279 meters away — and it opens on the <em style="font-family:var(--font-display);color:var(--tomato);">third Friday of each month.</em>
+        </div>
+    </div>
+    <div class="footer-mark">Source: DSDP street counts · SD Food Bank EFAP roster</div>
+</section>
+
+<!-- ============================================================
+     SLIDE 04 — THE GAP
+     ============================================================ -->
+<section class="slide">
+    <div class="slide-num">04 / 14</div>
+    <div class="shape dot-accent decorative" style="width:clamp(12px,1.8vw,20px);height:clamp(12px,1.8vw,20px);top:16%;right:14%;"></div>
+    <div class="shape ring decorative" style="width:clamp(120px,16vw,220px);height:clamp(120px,16vw,220px);top:10%;right:8%;"></div>
+    <div class="slide-content">
+        <div class="kicker reveal">The gap</div>
+        <h2 class="reveal">Food recovery serves Costco.<br>Not the <em>corner kitchen.</em></h2>
+        <ul class="ed-list reveal" style="margin-top:clamp(0.5rem,1.8vh,1.1rem);">
+            <li><b>Big-box programs exist</b> — mega-supermarkets have pickup contracts and compliance teams.</li>
+            <li><b>Small restaurants already give</b> — informally, untracked, unreceipted. <span class="muted">No paper trail means no tax deduction, and no reason to keep going.</span></li>
+            <li><b>The long tail is expensive</b> — many small pickups across many locations is exactly the routing problem nonprofits can't afford to solve by hand.</li>
+        </ul>
+    </div>
+    <div class="footer-mark">BellyUp · surplus → streets</div>
+</section>
+
+<!-- ============================================================
+     SLIDE 05 — THE IDEA
+     ============================================================ -->
+<section class="slide">
+    <div class="slide-num">05 / 14</div>
+    <div class="shape blob decorative" style="width:clamp(180px,26vw,360px);height:clamp(120px,17vh,210px);bottom:-8%;right:10%;"></div>
+    <div class="slide-content">
+        <div class="kicker reveal">The idea</div>
+        <h2 class="reveal">Report the surplus.<br><em>We dispatch the rest.</em></h2>
+        <div class="steps reveal" style="margin-top:clamp(0.8rem,2.5vh,1.6rem);">
+            <div class="step">
+                <div class="n">01.</div>
+                <h3>A kitchen closes</h3>
+                <p>The restaurant reports its end-of-day surplus in thirty seconds — pounds, type, pickup window. Voluntary, frictionless.</p>
+            </div>
+            <div class="step">
+                <div class="n">02.</div>
+                <h3>The engine scores</h3>
+                <p>Every collector &times; hotspot pair is evaluated by a reward-cost function — over a thousand combinations, in milliseconds.</p>
+            </div>
+            <div class="step">
+                <div class="n">03.</div>
+                <h3>Food meets need</h3>
+                <p>The best agency truck or pantry van picks up and serves the block where the need is real, measured, and unmet tonight.</p>
+            </div>
+        </div>
+    </div>
+    <div class="footer-mark">BellyUp · surplus → streets</div>
+</section>
+
+<!-- ============================================================
+     SLIDE 06 — THE DATA
+     ============================================================ -->
+<section class="slide">
+    <div class="slide-num">06 / 14</div>
+    <div class="shape ring decorative" style="width:clamp(150px,20vw,280px);height:clamp(150px,20vw,280px);bottom:-10%;right:-5%;"></div>
+    <div class="slide-content">
+        <div class="kicker reveal">The data</div>
+        <h2 class="reveal">Built on <em>street-level</em> truth.</h2>
+        <div class="stat-row reveal" style="margin:clamp(0.7rem,2.2vh,1.5rem) 0;">
+            <div class="stat-card"><div class="v">382</div><div class="k">downtown blocks with monthly street counts — need measured in person-equivalents</div></div>
+            <div class="stat-card"><div class="v">31</div><div class="k">food businesses with surplus potential — groceries, hotels, venues, hospitals</div></div>
+            <div class="stat-card"><div class="v">5</div><div class="k">recovery agencies that collect and redistribute across the county</div></div>
+            <div class="stat-card"><div class="v">15</div><div class="k">pantry sites with real schedules — daily hot meals to third-Friday boxes</div></div>
+        </div>
+        <p class="fine reveal">Provenance discipline: the need figures come from organizer street counts and are
+            never blended with external data — supply layers sit beside them, joined only by block.</p>
+    </div>
+    <div class="footer-mark">Source: DSDP organizer bundle · CalRecycle · City of SD recovery directory</div>
+</section>
+
+<!-- ============================================================
+     SLIDE 07 — THE ENGINE
+     ============================================================ -->
+<section class="slide">
+    <div class="slide-num">07 / 14</div>
+    <div class="shape dot-accent decorative" style="width:clamp(12px,1.8vw,20px);height:clamp(12px,1.8vw,20px);bottom:22%;right:12%;"></div>
+    <div class="shape decorative" style="width:clamp(100px,15vw,200px);height:2px;background:var(--ink);opacity:.35;bottom:25%;right:8%;"></div>
+    <div class="slide-content">
+        <div class="kicker reveal">The engine</div>
+        <h2 class="reveal">One <em>honest</em> equation.</h2>
+        <div class="ed-box reveal" style="margin:clamp(0.6rem,2vh,1.2rem) 0;">
+            <div class="formula">
+                <span class="var">net</span> <span class="op">=</span> <span class="var">reward</span> <span class="op">−</span> <span class="var">cost</span><br>
+                <span style="font-size:0.72em;"><span class="var">reward</span> <span class="op">=</span> meals served × $/meal × access boost <span class="op">+</span> overflow × ½</span><br>
+                <span style="font-size:0.72em;"><span class="var">cost</span> <span class="op">=</span> minutes × $17.75/hr <span class="op">+</span> miles × $0.76/mi</span>
+            </div>
+        </div>
+        <p class="fine reveal">Every constant is sourced, not invented: San Diego minimum wage (2026) · IRS standard
+            mileage rate (2026) · Feeding America's 1.2 lb-per-meal conversion. Change a constant, change the policy —
+            the model is an argument you can audit.</p>
+    </div>
+    <div class="footer-mark">BellyUp · surplus → streets</div>
+</section>
+
+<!-- ============================================================
+     SLIDE 08 — THE FLEET
+     ============================================================ -->
+<section class="slide">
+    <div class="slide-num">08 / 14</div>
+    <div class="shape blob decorative" style="width:clamp(180px,25vw,340px);height:clamp(110px,16vh,200px);top:-7%;left:-5%;"></div>
+    <div class="slide-content">
+        <div class="kicker reveal">The fleet</div>
+        <h2 class="reveal">Trucks take the bulk.<br>Vans take the <em>long tail.</em></h2>
+        <div class="compare reveal" style="margin-top:clamp(0.7rem,2.2vh,1.4rem);">
+            <div class="col">
+                <h3>Agency box truck</h3>
+                <div class="cap">2,000 lb capacity</div>
+                <p>Wins the 300-pound grocery loads a van can't carry. Overflow beyond a block's
+                    need rides back to the pantry network — nothing is wasted twice.</p>
+            </div>
+            <div class="col alt">
+                <h3>Mobile pantry van</h3>
+                <div class="cap">150 lb · schedule-gated</div>
+                <p>Dispatches only when its site is staffed tonight. Wins the 50-pound hotel
+                    trays next door — the long tail big logistics can't afford to chase.</p>
+            </div>
+        </div>
+        <p class="fine reveal" style="margin-top:clamp(0.5rem,1.6vh,1rem);">Prepared food routes only to
+            collectors equipped for it — hot-meal programs like Father Joe's, not dry-goods pantries.</p>
+    </div>
+    <div class="footer-mark">BellyUp · surplus → streets</div>
+</section>
+
+<!-- ============================================================
+     SLIDE 09 — FAIRNESS
+     ============================================================ -->
+<section class="slide">
+    <div class="slide-num">09 / 14</div>
+    <div class="shape ring decorative" style="width:clamp(140px,19vw,260px);height:clamp(140px,19vw,260px);top:12%;right:-6%;"></div>
+    <div class="slide-content">
+        <div class="kicker reveal">Fairness, engineered</div>
+        <h2 class="reveal">No block gets ten dinners<br>while the next gets <em>none.</em></h2>
+        <ul class="ed-list reveal" style="margin-top:clamp(0.6rem,2vh,1.2rem);">
+            <li><b>Serving limits</b> — two deliveries per hotspot per night, hard cap. A block whose need is met leaves the candidate pool entirely.</li>
+            <li><b>Remaining-need scoring</b> — a half-served block only earns reward on what's still unmet.</li>
+            <li><b>Access-gap boost</b> — up to +50% reward for blocks whose only food access is a monthly pantry. Scarcity is weighted, not just proximity.</li>
+        </ul>
+    </div>
+    <div class="footer-mark">BellyUp · surplus → streets</div>
+</section>
+
+<!-- ============================================================
+     SLIDE 10 — THE DEMO
+     ============================================================ -->
+<section class="slide">
+    <div class="slide-num">10 / 14</div>
+    <div class="shape dot-accent decorative" style="width:clamp(14px,2vw,22px);height:clamp(14px,2vw,22px);top:18%;left:8%;"></div>
+    <div class="slide-content">
+        <div class="kicker reveal">The demo — live</div>
+        <h2 class="reveal">Watch a dispatch <em>happen.</em></h2>
+        <ul class="ed-list reveal" style="margin-top:clamp(0.6rem,2vh,1.2rem);">
+            <li><b>A living map</b> — 207 hotspot blocks sized by measured need, 31 suppliers, every agency and pantry site.</li>
+            <li><b>Click a surplus report</b> — the engine triangulates 1,288 collector–hotspot pairs before your eyes, then locks the route.</li>
+            <li><b>A full dispatch card</b> — people fed, route miles, deployment cost to the cent, and the runners-up it beat.</li>
+        </ul>
+        <div class="ed-box reveal" style="margin-top:clamp(0.8rem,2.4vh,1.5rem);font-size:clamp(0.72rem,1.5vw,0.92rem);letter-spacing:0.12em;text-transform:uppercase;">
+            → Switch to the live demo now</div>
+    </div>
+    <div class="footer-mark">BellyUp · surplus → streets</div>
+</section>
+
+<!-- ============================================================
+     SLIDE 11 — THE RECEIPT
+     ============================================================ -->
+<section class="slide">
+    <div class="slide-num">11 / 14</div>
+    <div class="shape blob decorative" style="width:clamp(200px,28vw,380px);height:clamp(130px,18vh,220px);bottom:-9%;left:-6%;"></div>
+    <div class="slide-content" style="flex-direction:row;align-items:center;gap:clamp(1rem,4vw,3rem);flex-wrap:wrap;">
+        <div style="flex:1;min-width:min(88vw,320px);">
+            <div class="kicker reveal">The receipt</div>
+            <h2 class="reveal">Every donation leaves a <em>paper trail.</em></h2>
+            <p class="lede reveal">Confirming a dispatch logs a receipt. The ledger totals each donor's
+                pounds and estimated fair market value toward an IRC &sect;170(e)(3) enhanced
+                deduction — the tax credit big chains take for granted, finally within reach
+                of the corner kitchen.</p>
+        </div>
+        <div class="receipt-mock reveal" style="flex-shrink:0;">
+            <div class="rid">RECEIPT · BU-20260820-T01</div>
+            <div class="rrow"><span>Donor</span><span class="val">Scripps Mercy Hospital</span></div>
+            <div class="rrow"><span>Collected by</span><span class="val">St. Paul's Cathedral van</span></div>
+            <div class="rrow"><span>Served at</span><span class="val">17th St &amp; K St</span></div>
+            <div class="rrow"><span>Donated</span><span class="val">129 lbs · 75 people fed</span></div>
+            <div class="rrow"><span>Est. deductible FMV</span><span class="val good">$230.91</span></div>
+        </div>
+    </div>
+    <div class="footer-mark">FMV estimated at $1.79/lb — donors should consult a tax professional</div>
+</section>
+
+<!-- ============================================================
+     SLIDE 12 — ONE NIGHT
+     ============================================================ -->
+<section class="slide">
+    <div class="slide-num">12 / 14</div>
+    <div class="shape ring decorative" style="width:clamp(170px,24vw,320px);height:clamp(170px,24vw,320px);bottom:-14%;right:-7%;"></div>
+    <div class="slide-content">
+        <div class="kicker reveal">One night, measured</div>
+        <div class="hero-stat reveal" style="font-size:clamp(2.6rem,min(11vw,17vh),7rem);">22&cent;</div>
+        <h2 class="reveal">per person fed, on a real dispatch.</h2>
+        <div class="stat-row reveal" style="margin-top:clamp(0.6rem,2vh,1.3rem);">
+            <div class="stat-card"><div class="v">2,093</div><div class="k">pounds reported by 14 businesses in one evening</div></div>
+            <div class="stat-card"><div class="v">~1,744</div><div class="k">potential meals from a single night's surplus</div></div>
+            <div class="stat-card"><div class="v">$16.53</div><div class="k">deployment cost to feed 75 people at the highest-need block</div></div>
+        </div>
+    </div>
+    <div class="footer-mark">BellyUp · surplus → streets</div>
+</section>
+
+<!-- ============================================================
+     SLIDE 13 — WHAT'S NEXT
+     ============================================================ -->
+<section class="slide">
+    <div class="slide-num">13 / 14</div>
+    <div class="shape dot-accent decorative" style="width:clamp(12px,1.8vw,20px);height:clamp(12px,1.8vw,20px);bottom:20%;right:16%;"></div>
+    <div class="shape decorative" style="width:clamp(100px,15vw,200px);height:2px;background:var(--ink);opacity:.35;bottom:23%;right:10%;"></div>
+    <div class="slide-content">
+        <div class="kicker reveal">What's next</div>
+        <h2 class="reveal">From demo night to <em>every</em> night.</h2>
+        <ul class="ed-list reveal" style="margin-top:clamp(0.6rem,2vh,1.2rem);">
+            <li><b>A thirty-second reporting app</b> — photo, pounds, pickup window; done before the lights go off.</li>
+            <li><b>Multi-trip van routing</b> — let the pantry next door make two runs instead of ceding to a truck across town.</li>
+            <li><b>Live rosters</b> — real-time pantry schedules and agency capacity, refreshed from the sources we already cite.</li>
+            <li><b>A pilot</b> — with the partners already in our data: Feeding San Diego, Father Joe's Villages, the SD Food Bank.</li>
+        </ul>
+    </div>
+    <div class="footer-mark">BellyUp · surplus → streets</div>
+</section>
+
+<!-- ============================================================
+     SLIDE 14 — CLOSING
+     ============================================================ -->
+<section class="slide" style="align-items:center;justify-content:center;">
+    <div class="shape ring decorative" style="width:clamp(200px,30vw,400px);height:clamp(200px,30vw,400px);top:-12%;left:-8%;"></div>
+    <div class="shape blob decorative" style="width:clamp(220px,32vw,420px);height:clamp(140px,20vh,240px);bottom:-8%;right:-4%;"></div>
+    <div class="shape dot-accent decorative" style="width:clamp(14px,2vw,22px);height:clamp(14px,2vw,22px);top:22%;right:14%;"></div>
+    <div class="slide-content" style="align-items:center;text-align:center;">
+        <h2 class="reveal" style="font-size:clamp(1.8rem,min(6vw,9vh),4rem);max-width:12em;">Full kitchens. Hungry streets.<br><em>One dispatch apart.</em></h2>
+        <p class="lede reveal" style="margin:clamp(0.8rem,2.5vh,1.6rem) auto 0;">BellyUp — surplus food, delivered where the need is measured.</p>
+        <div class="ed-box reveal" style="margin-top:clamp(1rem,3vh,2rem);font-size:clamp(0.72rem,1.5vw,0.92rem);letter-spacing:0.12em;text-transform:uppercase;">
+            Thank you · Build For Good 2026</div>
+    </div>
+</section>
+
+<script>
+/* ===========================================
+   SLIDE PRESENTATION CONTROLLER
+   Keyboard nav, progress bar, nav dots,
+   scroll-triggered reveals.
+   =========================================== */
+class SlidePresentation {
+    constructor() {
+        this.slides = [...document.querySelectorAll('.slide')];
+        this.current = 0;
+        this.setupIntersectionObserver();
+        this.setupKeyboardNav();
+        this.setupProgressBar();
+        this.setupNavDots();
+    }
+
+    /* Add .visible when a slide enters the viewport — triggers .reveal CSS */
+    setupIntersectionObserver() {
+        const obs = new IntersectionObserver(entries => {
+            entries.forEach(e => {
+                if (e.isIntersecting) {
+                    e.target.classList.add('visible');
+                    this.current = this.slides.indexOf(e.target);
+                    this.updateDots();
+                }
+            });
+        }, { threshold: 0.55 });
+        this.slides.forEach(s => obs.observe(s));
+    }
+
+    goTo(i) {
+        const idx = Math.max(0, Math.min(this.slides.length - 1, i));
+        this.slides[idx].scrollIntoView({ behavior: 'smooth' });
+    }
+
+    setupKeyboardNav() {
+        document.addEventListener('keydown', e => {
+            if (e.target.getAttribute && e.target.getAttribute('contenteditable')) return; // don't hijack editing
+            if (['ArrowDown', 'ArrowRight', ' ', 'PageDown'].includes(e.key)) { e.preventDefault(); this.goTo(this.current + 1); }
+            if (['ArrowUp', 'ArrowLeft', 'PageUp'].includes(e.key)) { e.preventDefault(); this.goTo(this.current - 1); }
+            if (e.key === 'Home') { e.preventDefault(); this.goTo(0); }
+            if (e.key === 'End') { e.preventDefault(); this.goTo(this.slides.length - 1); }
+        });
+    }
+
+    setupProgressBar() {
+        const bar = document.querySelector('.progress-bar');
+        document.addEventListener('scroll', () => {
+            const max = document.documentElement.scrollHeight - innerHeight;
+            bar.style.width = (max > 0 ? (scrollY / max) * 100 : 0) + '%';
+        }, { passive: true });
+    }
+
+    setupNavDots() {
+        const nav = document.querySelector('.nav-dots');
+        this.dots = this.slides.map((s, i) => {
+            const b = document.createElement('button');
+            b.setAttribute('aria-label', 'Go to slide ' + (i + 1));
+            b.addEventListener('click', () => this.goTo(i));
+            nav.appendChild(b);
+            return b;
+        });
+        this.updateDots();
+    }
+
+    updateDots() {
+        if (!this.dots) return;
+        this.dots.forEach((d, i) => d.classList.toggle('active', i === this.current));
+    }
+}
+const deck = new SlidePresentation();
+
+/* ===========================================
+   INLINE EDITOR (opt-in feature)
+   Hover top-left corner or press E to toggle.
+   Edits auto-save to localStorage; Ctrl+S
+   downloads the edited HTML file.
+   =========================================== */
+class InlineEditor {
+    constructor() {
+        this.isActive = false;
+        this.storeKey = 'bellyup-deck-edits';
+        this.editableSelector =
+            '.slide h1, .slide h2, .slide h3, .slide p, .slide li, .slide .kicker, ' +
+            '.slide .hero-stat, .slide .ed-box, .slide .stat-card .v, .slide .stat-card .k, ' +
+            '.slide .step .n, .slide .cap, .slide .rid, .slide .rrow span, .slide .footer-mark, .slide .formula';
+        this.restore();
+    }
+
+    toggleEditMode() {
+        this.isActive = !this.isActive;
+        document.body.classList.toggle('editing', this.isActive);
+        document.getElementById('editToggle').classList.toggle('active', this.isActive);
+        document.querySelectorAll(this.editableSelector).forEach(el => {
+            if (this.isActive) el.setAttribute('contenteditable', 'true');
+            else el.removeAttribute('contenteditable');
+        });
+        if (!this.isActive) this.persist();
+    }
+
+    /* Save each slide's innerHTML to localStorage (auto on blur + toggle-off) */
+    persist() {
+        try {
+            const data = [...document.querySelectorAll('.slide')].map(s => s.innerHTML);
+            localStorage.setItem(this.storeKey, JSON.stringify(data));
+        } catch (e) { /* storage unavailable — edits stay in-page only */ }
+    }
+
+    restore() {
+        try {
+            const data = JSON.parse(localStorage.getItem(this.storeKey) || 'null');
+            if (!data) return;
+            const slides = document.querySelectorAll('.slide');
+            if (data.length !== slides.length) return; // deck changed — ignore stale edits
+            slides.forEach((s, i) => { s.innerHTML = data[i]; });
+        } catch (e) { /* ignore corrupt saves */ }
+    }
+
+    /* Ctrl+S: download the current document as an HTML file */
+    exportFile() {
+        this.persist();
+        const clone = document.documentElement.cloneNode(true);
+        clone.querySelectorAll('[contenteditable]').forEach(el => el.removeAttribute('contenteditable'));
+        clone.querySelector('body').classList.remove('editing');
+        const blob = new Blob(['<!DOCTYPE html>\n' + clone.outerHTML], { type: 'text/html' });
+        const a = document.createElement('a');
+        a.href = URL.createObjectURL(blob);
+        a.download = 'bellyup-pitch-edited.html';
+        a.click();
+        URL.revokeObjectURL(a.href);
+    }
+}
+const editor = new InlineEditor();
+
+/* Edit toggle interactions — JS hover with 400ms grace (CSS ~ hover breaks) */
+const hotzone = document.querySelector('.edit-hotzone');
+const editToggle = document.getElementById('editToggle');
+let hideTimeout = null;
+hotzone.addEventListener('mouseenter', () => { clearTimeout(hideTimeout); editToggle.classList.add('show'); });
+hotzone.addEventListener('mouseleave', () => {
+    hideTimeout = setTimeout(() => { if (!editor.isActive) editToggle.classList.remove('show'); }, 400);
+});
+editToggle.addEventListener('mouseenter', () => clearTimeout(hideTimeout));
+editToggle.addEventListener('mouseleave', () => {
+    hideTimeout = setTimeout(() => { if (!editor.isActive) editToggle.classList.remove('show'); }, 400);
+});
+editToggle.addEventListener('click', () => editor.toggleEditMode());
+hotzone.addEventListener('click', () => editor.toggleEditMode());
+
+document.addEventListener('keydown', e => {
+    if ((e.key === 'e' || e.key === 'E') && !(e.target.getAttribute && e.target.getAttribute('contenteditable'))) {
+        editor.toggleEditMode();
+    }
+    if ((e.metaKey || e.ctrlKey) && e.key === 's') { e.preventDefault(); editor.exportFile(); }
+});
+/* Auto-save while editing, on any blur */
+document.addEventListener('focusout', () => { if (editor.isActive) editor.persist(); });
+</script>
+</body>
+</html>

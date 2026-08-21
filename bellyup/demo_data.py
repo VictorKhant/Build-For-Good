@@ -152,25 +152,180 @@ def _rows(name: str) -> list[dict]:
 # hotspots
 # --------------------------------------------------------------------------
 
-def load_hotspots() -> list[dict]:
-    out = []
-    for r in _rows("hotspots.csv"):
-        need = float(r["need"])
-        if need < 0.5:
+def _need_trend_by_block() -> dict[str, float]:
+    """OLS slope of weighted need over the last 5 count dates, persons/year.
+
+    Same rule the build spec already documents for need_trend (CLAUDE.md 3.1):
+    weighted need per date = individuals + 1.75*tents_structures +
+    2.03*vehicles (3.4: never sum the raw components with an already-adjusted
+    total), fit over the block's own last 5 observations. Gi* answers "is
+    this a real cluster right now" -- this answers "is it growing" -- and the
+    two are independent questions. Only Panel261's 261 blocks carry a real
+    longitudinal series; a block missing here just gets no trend claim.
+    """
+    import numpy as np
+    from collections import defaultdict
+
+    rows_by_block: dict[str, list[dict]] = defaultdict(list)
+    for r in _rows("BlockLevel_Counts_Panel261.csv"):
+        rows_by_block[r["block_id"]].append(r)
+
+    out = {}
+    for block_id, rows in rows_by_block.items():
+        rows = sorted(rows, key=lambda r: r["count_date"])[-5:]
+        if len(rows) < 2:
             continue
-        out.append({
+        t0 = _dt.fromisoformat(rows[0]["count_date"])
+        x = np.array([(_dt.fromisoformat(r["count_date"]) - t0).days / 365.25
+                      for r in rows])
+        y = np.array([float(r["individuals"]) + 1.75 * float(r["tents_structures"])
+                      + 2.03 * float(r["vehicles"]) for r in rows])
+        slope, _ = np.polyfit(x, y, 1)
+        out[block_id] = float(slope)
+    return out
+
+
+def load_hotspots() -> list[dict]:
+    all_blocks = []
+    for r in _rows("hotspots.csv"):
+        all_blocks.append({
             "id": r["block_id"],
             "location": pretty_location(r["location"]),
             "area": r["area"],
             "lon": float(r["lon"]), "lat": float(r["lat"]),
-            "need": need,
+            "need": float(r["need"]),
             "rank": int(r["need_rank"]),
             "priority": r["priority"],
             "persistence": float(r["persistence"]) if r["persistence"] else None,
             "accessDays": float(r["food_access_days_per_week"] or 0),
             "unservedDaily": float(r["unserved_need_daily"] or 0),
         })
+
+    # Gi* (see GI_STAR_SPEC.md) over the FULL grid, not just the blocks that
+    # will survive the need>=0.5 display cut below -- a block with zero need
+    # is still evidence about its neighbours' significance, and dropping it
+    # first would bias every z-score upward.
+    import spatial
+    gi = spatial.gi_star(all_blocks)
+    for h in all_blocks:
+        s = gi[h["id"]]
+        h["giZ"] = s["z"]
+        h["giFlag"] = s["flag"]
+        h["giNeighbours"] = s["n_neighbours"]
+
+    # Gi* is deliberately NOT predictive -- it is one snapshot's spatial
+    # pattern (GI_STAR_SPEC.md 5: "not fair to say: predicts where need will
+    # be"). A real forecast needs a time dimension, which only the trend can
+    # give: a block that is BOTH a significant cluster now AND growing is a
+    # genuine prediction ("this is where need is headed"); one that is
+    # significant but flat or declining is just currently real, not a
+    # forecast. The two questions are independent and both real.
+    trend_by_block = _need_trend_by_block()
+    for h in all_blocks:
+        h["giTrend"] = trend_by_block.get(h["id"])
+
+    clusters = [h for h in all_blocks
+                if h["giFlag"] in ("hot95", "hot99") and h["giTrend"] is not None]
+    if clusters:
+        trends = sorted(h["giTrend"] for h in clusters)
+        lo = trends[int(0.25 * (len(trends) - 1))]
+        hi = trends[int(0.75 * (len(trends) - 1))]
+    else:
+        lo = hi = 0.0
+    for h in all_blocks:
+        if h["giFlag"] not in ("hot95", "hot99") or h["giTrend"] is None:
+            h["giPredict"] = None            # not a cluster -- nothing to predict
+        elif h["giTrend"] > hi:
+            h["giPredict"] = "emerging"       # growing fastest quarter of clusters
+        elif h["giTrend"] < lo:
+            h["giPredict"] = "cooling"        # declining fastest quarter of clusters
+        else:
+            h["giPredict"] = "established"    # a real cluster, not sharply moving
+
+    # A block's own emerging/cooling read is 5 sparse points; a real
+    # neighbourhood-wide trend (area_forecast.py, 108 months of history with
+    # seasonality and the fellowship program controlled for) is much sturdier
+    # evidence when it exists. Only ever surface it when the area trend
+    # clears p < 0.05 -- anything weaker is not shown at all, to keep noise
+    # off the map rather than dress up a coin flip as a second opinion.
+    import area_forecast
+    areas = area_forecast.area_trends(_rows)
+    for h in all_blocks:
+        h["giAreaSignal"] = None
+        if h["giPredict"] not in ("emerging", "cooling"):
+            continue
+        area = areas.get(h["area"])
+        if not area or not area["significant"]:
+            continue
+        wants = "up" if h["giPredict"] == "emerging" else "down"
+        h["giAreaSignal"] = "reinforced" if area["direction"] == wants else "contradicted"
+        h["giAreaTrend"] = area["trendPerMonth"]
+
+    out = [h for h in all_blocks if h["need"] >= 0.5]
     out.sort(key=lambda h: -h["need"])
+    return out
+
+
+def forecast_changes(months: float = 6.0) -> list[dict]:
+    """Not a second map -- just the blocks where Gi*'s verdict actually
+    changes between today and the projection.
+
+    Same statistic as load_hotspots(), run twice: once on today's need, once
+    on each block's need projected forward by its own measured trend
+    (persons/year, from _need_trend_by_block -- the same one behind
+    emerging/cooling). A block whose significance flips either direction is
+    returned; one that stays a cluster or stays a non-cluster is not --
+    that block's current marker on the map already shows what it is, and
+    repeating it here would be the exact clutter the p-value gate elsewhere
+    exists to avoid. Two kinds of change, both real:
+
+      "gained"  not a cluster today, predicted to become one -- a genuinely
+                new marker, since nothing is shown there right now
+      "lost"    a cluster today, predicted to fall out of significance --
+                drawn as an overlay ON the existing current marker, not a
+                replacement for it, so both states stay visible at once
+
+    A block with no panel coverage is projected flat, so it can only ever
+    show up here as unchanged (filtered out) -- unknown trend never
+    manufactures a change.
+    """
+    all_blocks = []
+    for r in _rows("hotspots.csv"):
+        all_blocks.append({
+            "id": r["block_id"],
+            "location": pretty_location(r["location"]),
+            "area": r["area"],
+            "lon": float(r["lon"]), "lat": float(r["lat"]),
+            "need": float(r["need"]),
+        })
+
+    trend_by_block = _need_trend_by_block()
+    for h in all_blocks:
+        h["currentNeed"] = h["need"]
+        trend = trend_by_block.get(h["id"]) or 0.0
+        h["projectedNeed"] = max(0.0, h["need"] + trend * (months / 12.0))
+
+    import spatial
+    gi_now = spatial.gi_star([{**h, "need": h["currentNeed"]} for h in all_blocks])
+    gi_future = spatial.gi_star([{**h, "need": h["projectedNeed"]} for h in all_blocks])
+
+    out = []
+    for h in all_blocks:
+        was_sig = gi_now[h["id"]]["flag"] in ("hot95", "hot99")
+        future = gi_future[h["id"]]
+        will_sig = future["flag"] in ("hot95", "hot99")
+        if was_sig == will_sig:
+            continue          # no change in verdict -- nothing to overlay
+        out.append({
+            "id": h["id"], "location": h["location"], "area": h["area"],
+            "lat": h["lat"], "lon": h["lon"],
+            "currentNeed": round(h["currentNeed"], 2),
+            "projectedNeed": round(h["projectedNeed"], 2),
+            "giZ": future["z"] if will_sig else gi_now[h["id"]]["z"],
+            "change": "gained" if will_sig else "lost",
+            "hadTrendData": h["id"] in trend_by_block,
+        })
+    out.sort(key=lambda h: -h["projectedNeed"])
     return out
 
 
@@ -288,7 +443,6 @@ def load_suppliers(hotspots=None) -> list[dict]:
         })
     out.sort(key=lambda s: (s["report"] is None, s["report"]["time"] if s["report"] else ""))
 
-    ids = registry.next_id()
     own = []
     for n, b in enumerate(mine):
         own.append({
@@ -455,41 +609,45 @@ def load_history(suppliers=None, agencies=None, pantries=None,
     if not pool or not collectors or not top_blocks:
         return []
 
+    # A handful of real-looking receipts, not a full week of traffic --
+    # BellyUp just launched, so a busy ledger reads as fabricated rather
+    # than as evidence the platform works.
     out = []
-    for back in range(7, 0, -1):
-        day = demo_date - timedelta(days=back)
-        for _ in range(rng.randint(2, 5)):
-            b = rng.choice(pool)
-            eligible = [c for c in collectors
-                        if b["surplus"] != "prepared" or c["acceptsPrepared"]]
-            if not eligible:
-                continue
-            col = rng.choice(eligible)
-            lbs = rng.randint(*hist_lbs.get(b["type"], (60, 200)))
-            collected = min(lbs, col["cap"])
-            meals = collected / C["LBS_PER_MEAL"]
-            h = rng.choice(top_blocks)
-            served = min(meals, h["need"])
-            boost = 1 + C["ACCESS_BOOST_MAX"] * (7 - min(h["accessDays"], 7)) / 7
-            reward = served * C["MEAL_VALUE"] * boost + (meals - served) * C["MEAL_VALUE"] * 0.5
-            miles = road_mi(col, b) + road_mi(b, h)
-            minutes = miles / C["AVG_SPEED_MPH"] * 60 + C["HANDLING_MIN"]
-            # same three-part costing the live engine uses, so a receipt from
-            # last Tuesday is comparable with one from tonight
-            import dispatch as _d
-            cost = _d.run_cost(col["kind"], miles, minutes, C)["total"]
-            out.append({
-                "receipt": f"BU-{day:%Y%m%d}-{len(out):03d}",
-                "date": day.isoformat(),
-                "time": f"{rng.randint(17, 20)}:{rng.randint(0, 59):02d}",
-                "supplierId": b["id"], "supplier": b["name"],
-                "lbs": lbs, "collectedLbs": collected,
-                "servedMeals": round(served), "surplusMeals": round(meals - served),
-                "collector": col["name"], "kind": col["kind"],
-                "hotspotId": h["id"], "hotspot": h["location"],
-                "fmv": round(lbs * C["FMV_PER_LB"], 2),
-                "net": round(reward - cost, 2),
-            })
+    n_total = rng.randint(2, 3)
+    recent_days = [demo_date - timedelta(days=b) for b in (2, 1)]
+    for i in range(n_total):
+        day = recent_days[i % len(recent_days)]
+        b = rng.choice(pool)
+        eligible = [c for c in collectors
+                    if b["surplus"] != "prepared" or c["acceptsPrepared"]]
+        if not eligible:
+            continue
+        col = rng.choice(eligible)
+        lbs = rng.randint(*hist_lbs.get(b["type"], (60, 200)))
+        collected = min(lbs, col["cap"])
+        meals = collected / C["LBS_PER_MEAL"]
+        h = rng.choice(top_blocks)
+        served = min(meals, h["need"])
+        boost = 1 + C["ACCESS_BOOST_MAX"] * (7 - min(h["accessDays"], 7)) / 7
+        reward = served * C["MEAL_VALUE"] * boost + (meals - served) * C["MEAL_VALUE"] * 0.5
+        miles = road_mi(col, b) + road_mi(b, h)
+        minutes = miles / C["AVG_SPEED_MPH"] * 60 + C["HANDLING_MIN"]
+        # same three-part costing the live engine uses, so a receipt from
+        # last Tuesday is comparable with one from tonight
+        import dispatch as _d
+        cost = _d.run_cost(col["kind"], miles, minutes, C)["total"]
+        out.append({
+            "receipt": f"BU-{day:%Y%m%d}-{len(out):03d}",
+            "date": day.isoformat(),
+            "time": f"{rng.randint(17, 20)}:{rng.randint(0, 59):02d}",
+            "supplierId": b["id"], "supplier": b["name"],
+            "lbs": lbs, "collectedLbs": collected,
+            "servedMeals": round(served), "surplusMeals": round(meals - served),
+            "collector": col["name"], "kind": col["kind"],
+            "hotspotId": h["id"], "hotspot": h["location"],
+            "fmv": round(lbs * C["FMV_PER_LB"], 2),
+            "net": round(reward - cost, 2),
+        })
     return out
 
 

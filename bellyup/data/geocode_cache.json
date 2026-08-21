@@ -25,6 +25,12 @@
     "lon": -117.163652,
     "matched": "120 ELM ST, SAN DIEGO, CA, 92101"
   },
+  "1200 3rd ave, san diego, ca": {
+    "lat": 32.718325,
+    "lon": -117.162092,
+    "matched": "1200 3RD AVE, SAN DIEGO, CA, 92101",
+    "source": "census"
+  },
   "12219 roberts way, lakeside, ca 92040": {
     "lat": 32.858542,
     "lon": -116.927671,
@@ -166,6 +172,12 @@
     "source": "census"
   },
   "2305 india st, san diego, ca 92101": {
+    "lat": 32.728434,
+    "lon": -117.170255,
+    "matched": "2305 INDIA ST, SAN DIEGO, CA, 92101",
+    "source": "census"
+  },
+  "2305 indian street, san diego, ca": {
     "lat": 32.728434,
     "lon": -117.170255,
     "matched": "2305 INDIA ST, SAN DIEGO, CA, 92101",
@@ -421,30 +433,22 @@
     "lon": -116.994583,
     "matched": "9400 CAMPO RD, SPRING VALLEY, CA, 91977"
   },
+  "9450 gilman dr, san diego, ca": {
+    "lat": 32.876069,
+    "lon": -117.229199,
+    "matched": "Gilman Drive, University City, San Diego, San Diego County, California, 92161, United States",
+    "source": "nominatim"
+  },
+  "9450 gilman drive, san diego, ca": {
+    "lat": 32.876069,
+    "lon": -117.229199,
+    "matched": "Gilman Drive, University City, San Diego, San Diego County, California, 92161, United States",
+    "source": "nominatim"
+  },
   "9455 waples street, san diego, ca 92121": {
     "lat": 32.902145,
     "lon": -117.183839,
     "matched": "9455 WAPLES ST, SAN DIEGO, CA, 92121"
-  },
-  "9500 gilma dr, san diego, ca": null,
-  "9500 gilma drive, san diego, ca": null,
-  "9500 gilman dr, san diego, ca": {
-    "lat": 32.879244,
-    "lon": -117.231125,
-    "matched": "University of California, San Diego, 9500, Gilman Drive, University City, San Diego, San Diego County, California, 92093, United States",
-    "source": "nominatim"
-  },
-  "9500 gilman drive, san diego, ca": {
-    "lat": 32.879244,
-    "lon": -117.231125,
-    "matched": "University of California, San Diego, 9500, Gilman Drive, Torrey Pines, San Diego, San Diego County, California, 92093, United States",
-    "source": "nominatim"
-  },
-  "9500, san diego, ca": {
-    "lat": 32.879244,
-    "lon": -117.231125,
-    "matched": "University of California, San Diego, 9500, Gilman Drive, Torrey Pines, San Diego, San Diego County, California, 92093, United States",
-    "source": "nominatim"
   },
   "9850 distribution avenue, san diego, ca 92121": {
     "lat": 32.886178,
@@ -482,5 +486,25 @@
     "source": "nominatim"
   },
   "zzzqqq nowhere at all, san diego, ca": null,
-  "zzzz nowhere at all, san diego, ca": null
+  "zzzz nowhere at all, san diego, ca": null,
+  "9500 gilma dr, san diego, ca": null,
+  "9500 gilma drive, san diego, ca": null,
+  "9500 gilman dr, san diego, ca": {
+    "lat": 32.879244,
+    "lon": -117.231125,
+    "matched": "University of California, San Diego, 9500, Gilman Drive, University City, San Diego, San Diego County, California, 92093, United States",
+    "source": "nominatim"
+  },
+  "9500 gilman drive, san diego, ca": {
+    "lat": 32.879244,
+    "lon": -117.231125,
+    "matched": "University of California, San Diego, 9500, Gilman Drive, Torrey Pines, San Diego, San Diego County, California, 92093, United States",
+    "source": "nominatim"
+  },
+  "9500, san diego, ca": {
+    "lat": 32.879244,
+    "lon": -117.231125,
+    "matched": "University of California, San Diego, 9500, Gilman Drive, Torrey Pines, San Diego, San Diego County, California, 92093, United States",
+    "source": "nominatim"
+  }
 }

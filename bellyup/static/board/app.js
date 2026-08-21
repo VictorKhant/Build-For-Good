@@ -11,6 +11,7 @@
 let HOTSPOTS = [], SUPPLIERS = [], AGENCIES = [], PANTRIES = [], C = {}, CLAIMS = {};
 let HISTORY = [], tonight = [], OPTED_OUT = 0;
 let CANDIDATES = [], REPORTING = [], COLLECTORS = [];
+let showForecast = false;
 
 const api = (path, opts = {}) => fetch(path, { cache: "no-store", ...opts }).then(async r => {
   const body = await r.json().catch(() => ({}));
@@ -132,14 +133,22 @@ const typeIcon = { grocery: "🛒", hotel: "🏨", venue: "🏟", health: "🏥"
 const hotspotMarkers = {}, agencyMarkers = {}, pantryMarkers = {}, supplierMarkers = {};
 function hotspotStyle(h) {
   const closed = hotspotClosed(h);
-  const col = closed ? themeColor("--c-route") : themeColor("--c-hotspot");
+  const cluster = h.giFlag === "hot95" || h.giFlag === "hot99";
+  const predictive = h.giPredict === "emerging" || h.giPredict === "cooling";
+  const col = closed ? themeColor("--c-route")
+            : h.giPredict === "emerging" ? themeColor("--c-emerging")
+            : h.giPredict === "cooling" ? themeColor("--c-cooling")
+            : themeColor("--c-hotspot");
+  const sizeMult = closed || predictive ? 1 : 0.68;
   return {
-    radius: 3 + Math.sqrt(h.need) * 2.1,
+    radius: (3 + Math.sqrt(h.need) * 2.1) * sizeMult,
     color: col,
-    weight: 1.4,
-    opacity: closed ? 0.9 : 0.8,
+    weight: closed ? 2.6 : predictive ? 2.6 : cluster ? 1.6 : 1.4,
+    opacity: closed ? 0.9 : predictive ? 0.95 : cluster ? 0.55 : 0.8,
     fillColor: col,
-    fillOpacity: closed ? 0.3 : 0.16 + Math.min(h.need / 40, 0.34),
+    fillOpacity: closed ? 0.3
+      : predictive ? 0.16 + Math.min(h.need / 40, 0.34)
+      : (0.16 + Math.min(h.need / 40, 0.34)) * 0.5,
   };
 }
 function hotspotTip(h) {
@@ -147,9 +156,60 @@ function hotspotTip(h) {
   const status = hotspotClosed(h)
     ? `<br><b style="color:${themeColor("--c-route")}">served tonight — off the candidate list</b>`
     : servedNow > 0 ? `<br>${fmtInt(servedNow)} meals delivered tonight; ${(h.need - servedNow).toFixed(1)} need remaining` : "";
+  const cluster = h.giFlag === "hot99"
+    ? `<br><b>significant cluster</b> (p&lt;0.01, z=${h.giZ})`
+    : `<br><b>significant cluster</b> (p&lt;0.05, z=${h.giZ})`;
+  const predict = h.giPredict === "emerging"
+    ? `<br><b style="color:${themeColor("--c-emerging")}">emerging</b> — growing ${Math.abs(h.giTrend).toFixed(1)}/yr, becoming a cluster`
+    : h.giPredict === "cooling"
+    ? `<br><b style="color:${themeColor("--c-cooling")}">cooling</b> — declining ${Math.abs(h.giTrend).toFixed(1)}/yr from its peak`
+    : h.giPredict === "established" ? `<br>established — steady, not sharply moving` : "";
+  const areaCheck = h.giAreaSignal === "reinforced"
+    ? `<br><span style="opacity:.85">↳ ${h.area} is also trending that way (${h.giAreaTrend > 0 ? "+" : ""}${h.giAreaTrend}/mo, p&lt;0.05)</span>`
+    : h.giAreaSignal === "contradicted"
+    ? `<br><span style="opacity:.85">↳ but ${h.area} overall is trending the other way (${h.giAreaTrend > 0 ? "+" : ""}${h.giAreaTrend}/mo, p&lt;0.05)</span>` : "";
   return `<b>${h.location}</b> &middot; ${h.area}` +
     `<div class="tip-k">need ${h.need.toFixed(1)} person-equivalents &middot; rank #${h.rank}` +
-    `<br>food access ${h.accessDays.toFixed(h.accessDays % 1 ? 1 : 0)} days/week${status}</div>`;
+    `<br>food access ${h.accessDays.toFixed(h.accessDays % 1 ? 1 : 0)} days/week${status}${cluster}${predict}${areaCheck}</div>`;
+}
+
+let FORECAST_MONTHS = 6;
+let FORECAST_CHANGES = null;
+const changeMarkers = {};
+
+function changeStyle(c) {
+  const col = c.change === "gained" ? themeColor("--c-emerging") : themeColor("--c-cooling");
+  return { radius: (3 + Math.sqrt(c.projectedNeed) * 2.1) + (c.change === "lost" ? 6 : 0),
+    color: col, weight: 2.6, opacity: .9, fillColor: col,
+    fillOpacity: c.change === "gained" ? .22 : 0, dashArray: "2 5", interactive: true };
+}
+
+function changeTip(c) {
+  const delta = c.projectedNeed - c.currentNeed;
+  const trend = c.hadTrendData
+    ? `need ${c.currentNeed.toFixed(1)} now &rarr; ${c.projectedNeed.toFixed(1)} projected (${delta >= 0 ? "+" : ""}${delta.toFixed(1)})`
+    : `no trend history for this block`;
+  return c.change === "gained"
+    ? `<b>${c.location}</b> &middot; ${c.area}<div class="tip-k"><b style="color:${themeColor("--c-emerging")}">predicted NEW cluster</b> in ~${FORECAST_MONTHS} months (z=${c.giZ})<br>${trend} &middot; not significant today</div>`
+    : `<b>${c.location}</b> &middot; ${c.area}<div class="tip-k"><b style="color:${themeColor("--c-cooling")}">predicted to fall out</b> of significance in ~${FORECAST_MONTHS} months<br>${trend} &middot; a real cluster today, fading</div>`;
+}
+
+async function toggleForecast() {
+  showForecast = !showForecast;
+  const btn = $("forecastBtn");
+  if (showForecast) {
+    btn.textContent = "Loading…";
+    if (!FORECAST_CHANGES) {
+      try { FORECAST_CHANGES = (await api(`/api/board/hotspots/forecast?months=${FORECAST_MONTHS}`)).changes; }
+      catch (e) { showForecast = false; btn.textContent = "Show predicted changes"; alert("Couldn't load the forecast: " + e.message); return; }
+    }
+    btn.textContent = `Hide predicted changes (${FORECAST_CHANGES.length})`;
+    btn.classList.add("on");
+  } else {
+    btn.textContent = "Show predicted changes";
+    btn.classList.remove("on");
+  }
+  buildLayers();
 }
 function refreshHotspots() {
   for (const h of HOTSPOTS) {
@@ -157,21 +217,35 @@ function refreshHotspots() {
     hotspotMarkers[h.id].setStyle(hotspotStyle(h));
     hotspotMarkers[h.id].setTooltipContent(hotspotTip(h));
   }
+  for (const c of (FORECAST_CHANGES || [])) {
+    if (!changeMarkers[c.id]) continue;
+    changeMarkers[c.id].setStyle(changeStyle(c));
+    changeMarkers[c.id].setTooltipContent(changeTip(c));
+  }
 }
 
 /* Everything below used to run at load. It now runs from buildLayers() once
    /api/board has answered, and again whenever the roster changes. */
 function buildLayers() {
   baseLayer.clearLayers();
-  for (const k of [hotspotMarkers, agencyMarkers, pantryMarkers, supplierMarkers])
+  for (const k of [hotspotMarkers, agencyMarkers, pantryMarkers, supplierMarkers, changeMarkers])
     for (const id in k) delete k[id];
 
   map.fitBounds(L.latLngBounds(HOTSPOTS.map(h => [h.lat, h.lon])).pad(0.12));
 
-for (const h of (role === "agency" ? HOTSPOTS : [])) {
+$("forecastBtn").hidden = role !== "agency";
+const significantHotspots = HOTSPOTS.filter(h => h.giFlag === "hot95" || h.giFlag === "hot99");
+for (const h of (role === "agency" ? significantHotspots : [])) {
   const m = L.circleMarker([h.lat, h.lon], { ...hotspotStyle(h), className: "hs-path" }).addTo(baseLayer);
   m.bindTooltip(hotspotTip(h), { className: "hs-tip", direction: "top", opacity: 1 });
   hotspotMarkers[h.id] = m;
+}
+if (showForecast && role === "agency") {
+  for (const c of (FORECAST_CHANGES || [])) {
+    const m = L.circleMarker([c.lat, c.lon], { ...changeStyle(c), className: "hs-path" }).addTo(baseLayer);
+    m.bindTooltip(changeTip(c), { className: "hs-tip", direction: "top", opacity: 1 });
+    changeMarkers[c.id] = m;
+  }
 }
 
 /* agency HQ markers */
@@ -2098,6 +2172,7 @@ async function loadLiveNetwork() {
   wireForm();          /* static elements — wire before the first fetch, or
                           the visible button swallows an early click */
   wireRoles();
+  $("forecastBtn").addEventListener("click", toggleForecast);
   $("simRegenerate").addEventListener("click", runSimulation);
   $("simRestore").addEventListener("click", () => {
     drawSimulationRoutes(simulationRoutes);

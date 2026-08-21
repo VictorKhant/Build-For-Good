@@ -27,6 +27,9 @@
 
   <div class="topright">
     <div class="topstats" id="topstats"></div>
+    <button class="btn-ledger" id="forecastBtn" title="Overlay statistically predicted hotspot changes" hidden>
+      Show predicted changes
+    </button>
     <button class="btn-ledger" id="ledgerBtn" title="Delivery ledger">
       Ledger <span class="ledger-count" id="ledgerCount">0</span>
     </button>
@@ -137,7 +140,10 @@
     <div id="map"></div>
 
     <div class="map-legend">
-      <div class="lg-row"><span class="lg-hotspot"></span> Hotspot block &middot; size = need (person&#8209;equivalents)</div>
+      <div class="lg-row"><span class="lg-hotspot"></span> Significant hotspot cluster (Gi*, p&lt;0.05) &middot; size = need</div>
+      <div class="lg-row"><span class="lg-hotspot lg-cluster lg-emerging"></span> Emerging cluster &middot; growing</div>
+      <div class="lg-row"><span class="lg-hotspot lg-cluster lg-cooling"></span> Cooling cluster &middot; declining</div>
+      <div class="lg-row"><span class="lg-hotspot lg-cluster lg-new"></span> Dashed = predicted change</div>
       <div class="lg-row"><span class="lg-hotspot lg-served"></span> Hotspot served tonight (at limit)</div>
       <div class="lg-row"><span class="lg-supplier"></span> Supplier reporting surplus</div>
       <div class="lg-row"><span class="lg-supplier lg-quiet"></span> Supplier, quiet tonight</div>
