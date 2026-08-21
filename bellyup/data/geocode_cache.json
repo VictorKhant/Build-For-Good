@@ -25,6 +25,12 @@
     "lon": -117.163652,
     "matched": "120 ELM ST, SAN DIEGO, CA, 92101"
   },
+  "1200 3rd ave, san diego, ca": {
+    "lat": 32.718325,
+    "lon": -117.162092,
+    "matched": "1200 3RD AVE, SAN DIEGO, CA, 92101",
+    "source": "census"
+  },
   "12219 roberts way, lakeside, ca 92040": {
     "lat": 32.858542,
     "lon": -116.927671,
