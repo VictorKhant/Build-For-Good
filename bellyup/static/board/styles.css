@@ -22,6 +22,8 @@
   --c-agency: #2a78d6;
   --c-pantry: #4a3aa7;
   --c-route: #0e8f63;
+  --c-emerging: #c9660a;   /* a cluster growing fast -- where need is headed */
+  --c-cooling: #2f7bbf;    /* a cluster fading -- currently real, not a forecast */
   --good: #006300;
   --bad: #d03b3b;
 
@@ -45,6 +47,8 @@
   --c-agency: #3987e5;
   --c-pantry: #9085e9;
   --c-route: #1baf7a;
+  --c-emerging: #f0a340;
+  --c-cooling: #5b9fe0;
   --good: #0ca30c;
   --bad: #e66767;
 
@@ -98,9 +102,15 @@ button { font: inherit; color: inherit; cursor: pointer; }
   padding: 8px 13px;
   font-weight: 600;
   font-size: 13px;
-  transition: border-color .15s;
+  white-space: nowrap;
+  transition: border-color .15s, background .15s, color .15s;
 }
 .btn-ledger:hover { border-color: var(--c-route); }
+.btn-ledger.on {
+  background: color-mix(in srgb, var(--c-emerging) 16%, var(--surface-2));
+  border-color: var(--c-emerging);
+  color: var(--c-emerging);
+}
 .ledger-count {
   display: inline-block;
   min-width: 20px;
@@ -224,6 +234,10 @@ button { font: inherit; color: inherit; cursor: pointer; }
   flex-shrink: 0;
 }
 .lg-served { border-color: var(--c-route); background: color-mix(in srgb, var(--c-route) 30%, transparent); }
+.lg-cluster { border-width: 2.6px; }
+.lg-emerging { border-color: var(--c-emerging); background: color-mix(in srgb, var(--c-emerging) 30%, transparent); }
+.lg-cooling { border-color: var(--c-cooling); background: color-mix(in srgb, var(--c-cooling) 30%, transparent); }
+.lg-new { border-style: dashed; border-width: 2.2px; border-color: var(--muted); background: transparent; }
 .lg-supplier {
   width: 11px; height: 11px; border-radius: 50%;
   background: var(--c-supplier);
