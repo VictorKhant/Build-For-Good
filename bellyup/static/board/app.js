@@ -61,14 +61,28 @@ const TILE_URLS = {
 };
 let theme = "light";
 try { theme = localStorage.getItem("bellyup.theme") || "light"; } catch (e) { /* private mode */ }
+
+/* getComputedStyle forces a style recalculation, and hotspotStyle plus
+   hotspotTip call this for every one of 207 blocks on every render -- roughly
+   400 forced recalcs per redraw, which was the whole of the lag. The tokens
+   only change when the theme does, so read them once per theme.
+   Declared before applyThemeAttr() runs: `let` is not hoisted, so clearing the
+   cache from init would otherwise throw on the temporal dead zone. */
+let _themeCache = {};
+function themeColor(token) {
+  if (token in _themeCache) return _themeCache[token];
+  const v = getComputedStyle(document.documentElement).getPropertyValue(token).trim();
+  _themeCache[token] = v;
+  return v;
+}
+function clearThemeCache() { _themeCache = {}; }
+
 applyThemeAttr();
 
 function applyThemeAttr() {
+  clearThemeCache();
   if (theme === "dark") document.documentElement.setAttribute("data-theme", "dark");
   else document.documentElement.removeAttribute("data-theme");
-}
-function themeColor(token) {
-  return getComputedStyle(document.documentElement).getPropertyValue(token).trim();
 }
 
 /* ----------------------------------------------------------------- ledger */
@@ -1220,10 +1234,64 @@ function renderLocalCollectors(s) {
     </div>`;
 }
 
+/* The scan sequence, kept for the business view. It is not decoration: the
+   dispatch really is evaluating every collector against every open block, and
+   the count that ticks up is the actual pair total the server reports. It also
+   covers the round trip, so the panel never flashes empty. */
+function beginScan(s) {
+  clearFx();
+  fxLayer.addLayer(L.marker([s.lat, s.lon], {
+    icon: L.divIcon({ className: "",
+      html: '<div class="radar"><span></span><span></span><span></span></div>',
+      iconSize: [12, 12], iconAnchor: [6, 6] }),
+    interactive: false, zIndexOffset: 900,
+  }));
+  $("calcTitle").textContent = "FINDING A COLLECTOR";
+  $("calcLine").innerHTML = `${s.name} &middot; ${fmtInt(s.report.lbs)} lb
+    ${s.surplus}`;
+  $("calcCount").textContent = "0";
+  $("calcOverlay").classList.add("show");
+
+  /* flick lines out to the collectors actually being considered */
+  const cols = [
+    ...AGENCIES.filter(a => a.mobileCapable !== false),
+    ...PANTRIES.filter(p => p.dispatchable),
+  ];
+  cols.forEach((c, i) => setTimeout(() => {
+    if (selectedId !== s.id) return;
+    const line = L.polyline([[s.lat, s.lon], [c.lat, c.lon]], {
+      color: themeColor("--c-supplier"), weight: 1.3, opacity: 0.9,
+      className: "scan-line", interactive: false,
+    });
+    fxLayer.addLayer(line);
+    setTimeout(() => fxLayer.removeLayer(line), 480);
+  }, 60 + i * 70));
+}
+
+function endScan(s, evaluated, collector) {
+  const t0 = performance.now();
+  (function tick(now) {
+    if (selectedId !== s.id) return;
+    const p = Math.min((now - t0) / 700, 1);
+    $("calcCount").textContent = fmtInt(evaluated * (1 - Math.pow(1 - p, 3)));
+    if (p < 1) requestAnimationFrame(tick);
+  })(t0);
+
+  $("calcTitle").textContent = collector ? "COLLECTOR ASSIGNED" : "NO COLLECTOR";
+  $("calcLine").innerHTML = collector
+    ? `${collector} &rarr; ${s.name}`
+    : `nothing can take this tonight`;
+  setTimeout(() => {
+    if (selectedId === s.id) $("calcOverlay").classList.remove("show");
+  }, 2400);
+}
+
 async function pickRestaurant(id) {
   selectedId = id;
   const s = SUPPLIERS.find(x => x.id === id);
-  clearFx();
+  beginScan(s);
+  const SCAN_MS = 900;
+  const started = performance.now();
   try {
     const r = await dispatchFor(s);
     const b = r.pairs[0];
@@ -1232,8 +1300,15 @@ async function pickRestaurant(id) {
       miles: b.leg1, fmv: r.fmv, deferred: b.deferred,
       lat: b.collector.lat, lon: b.collector.lon,
     } : { ok: false, reason: r.headline || "No agency can collect this yet." };
+    s.__evaluated = r.evaluated || 0;
   } catch (e) { s.__match = { ok: false, reason: e.message }; }
 
+  /* the server answers in ~20 ms; let the scan play rather than flashing */
+  const left = SCAN_MS - (performance.now() - started);
+  if (left > 0) await new Promise(r => setTimeout(r, left));
+  if (selectedId !== id) return;          // a different pick overtook this one
+
+  endScan(s, s.__evaluated || 0, s.__match.ok ? s.__match.collector : null);
   renderBusiness();
   renderLocalCollectors(s);
 
@@ -1249,7 +1324,9 @@ async function pickRestaurant(id) {
     map.flyToBounds(L.latLngBounds([[m.lat, m.lon], [s.lat, s.lon]]).pad(0.3),
                     { duration: 0.7 });
   }
-  showEmpty(EMPTY_BY_ROLE.business);
+  /* NOT showEmpty() here -- renderLocalCollectors has just filled this panel,
+     and calling it re-hid the content and restored the "pick a restaurant"
+     prompt over the top of it. */
 }
 
 /* --------------------------------------------------------------- agency */
@@ -1304,6 +1381,11 @@ async function loadOffers() {
   try { offers = await api(`/api/board/agency/${myAgency}/offers`); }
   catch (e) { $("resultBody").innerHTML = `<div class="empty">${e.message}</div>`; return; }
 
+  if (!offers || !offers.agency) {
+    $("resultBody").innerHTML = `<div class="empty">Could not load offers for
+      this collector.</div>`;
+    return;
+  }
   basket = basket.filter(id => offers.offers.some(o => o.supplier.id === id));
   renderAgencyList();
 
