@@ -1,4 +1,11 @@
-# BellyUp
+# BellyUp — engine internals
+
+> **Start at the repo root `README.md`** for what this is and how to run it.
+> This file covers the role-scoped build served at `/roles`.
+>
+> The main demo at `/` is the **dispatch board**: `demo_data.py` + `dispatch.py`
+> + `registry.py` + `static/board/`. It uses the real datasets in `dataset/` and
+> supersedes the simulated agency roster described below.
 
 Connecting small restaurants with agencies that feed unsheltered San Diegans.
 
@@ -16,10 +23,12 @@ efficiency is still what gets optimised, just on the agency's books.
 ## Run
 
 ```bash
-../.venv/bin/python simulate_agencies.py   # placeholder agency roster
-../.venv/bin/python seed.py                # hubspots + geocoding
-../.venv/bin/python run_demo.py            # all scenarios, both legs
+../.venv/bin/python -m uvicorn app:app --port 8000   # / board, /roles views
+
+../.venv/bin/python run_demo.py            # scenarios, both legs, no browser
 ../.venv/bin/python verify.py              # what still needs a human
+../.venv/bin/python simulate_agencies.py   # regenerate the placeholder roster
+../.venv/bin/python seed.py                # hubspots + geocoding
 ```
 
 ## Modules
@@ -38,6 +47,16 @@ efficiency is still what gets optimised, just on the agency's books.
 | `sb1383_donors.py` | donor layer from OpenStreetMap |
 | `simulate_agencies.py` | **placeholder** agency data |
 | `verify.py` | verification worksheet, ranked by demo impact |
+
+### The dispatch board (served at `/`)
+
+| file | role |
+|---|---|
+| `demo_data.py` | loads `dataset/` into the shapes the board expects |
+| `dispatch.py` | reward−cost engine, freshness, hotspot ledger — core |
+| `registry.py` | persistence: registrations, nightly reports, opt-outs |
+| `geocode.py` | address → coordinates (Census, then Nominatim) |
+| `static/board/` | the board UI |
 
 `matching.py` is **superseded** by `collection.py` + `distribution.py` and is no
 longer imported anywhere. Safe to delete.
@@ -91,3 +110,6 @@ is why `economics.tax_deduction()` computes and displays it.
 **`data/agencies.json` is simulated.** Every agency in it is invented. Replace it
 per `AGENCY_SCHEMA.md`; no code changes needed. `verify.py` prints a banner while
 placeholder data is in place.
+
+This applies to the `/roles` views only. The dispatch board at `/` uses the real
+`dataset/agencies.csv` and `dataset/mobile_pantries.csv`.
