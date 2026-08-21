@@ -79,6 +79,14 @@ CONSTANTS = {
         "pantry": 0.22,
         "dropoff": 0.22,
     },
+    # --- when a collector can next hand food out ------------------------
+    # Pantries carry a real schedule in mobile_pantries.csv. Agencies carry
+    # none, so a standard weekday operation is assumed and said so.
+    "AGENCY_OPEN": "08:00",
+    "AGENCY_CLOSE": "17:00",
+    "EVENING_CUTOFF": "21:00",    # when an evening crew stands down
+    "HOLD_HANDLING_MIN": 10,      # extra load/unload for storing overnight
+
     "STAFF_PER_RUN": {            # a 2,000 lb truck run is not a one-person job
         "agency": 2,
         "pantry": 1,
@@ -364,6 +372,7 @@ def load_pantries() -> list[dict]:
                                          if p["end_time"] else ""),
             "daysPerWeek": float(p["days_per_week"]),
             "startTime": p["start_time"], "endTime": p["end_time"],
+            "dayList": p["day_list"],
             "acceptsPrepared": "meal" in p["program"].lower(),
             "availableTonight": avail,
             "dispatchable": avail and public,
@@ -460,3 +469,60 @@ def load_history(suppliers=None, agencies=None, pantries=None,
                 "net": round(reward - cost, 2),
             })
     return out
+
+
+# --------------------------------------------------------------------------
+# when a collector can next hand food out
+# --------------------------------------------------------------------------
+
+_ORDINALS = {"1st": 1, "2nd": 2, "3rd": 3, "4th": 4, "5th": 5}
+
+
+def _matches_day(d, day_list: str) -> bool:
+    """Does this date fall on a schedule like '1st & 4th Thursday'?"""
+    txt = (day_list or "").strip()
+    if not txt:
+        return False
+    if txt.lower() == "daily":
+        return True
+    name = WEEKDAYS[d.weekday()]
+
+    if "-" in txt:                       # 'Tuesday-Thursday'
+        a, _, b = (x.strip() for x in txt.partition("-"))
+        if a in WEEKDAYS and b in WEEKDAYS:
+            return WEEKDAYS.index(a) <= d.weekday() <= WEEKDAYS.index(b)
+
+    if name not in txt:
+        return False
+    ords = [_ORDINALS[o] for o in _ORDINALS if o in txt]
+    if not ords:
+        return True                      # every such weekday
+    return ((d.day - 1) // 7 + 1) in ords
+
+
+def next_run_datetime(collector: dict, after):
+    """First moment after `after` that this collector can distribute again.
+
+    A pantry runs to its published schedule. An agency has no published hours
+    in the roster, so a weekday AGENCY_OPEN-AGENCY_CLOSE operation is assumed
+    -- an assumption, and labelled as one wherever it shows.
+    """
+    C = CONSTANTS
+    if collector.get("kind") == "agency" or not collector.get("schedule"):
+        oh, om = (int(x) for x in C["AGENCY_OPEN"].split(":"))
+        d = after
+        for _ in range(14):
+            d = d + timedelta(days=1)
+            if d.weekday() < 5:
+                return d.replace(hour=oh, minute=om, second=0, microsecond=0)
+        return None
+
+    day_list = collector.get("dayList") or ""
+    start = collector.get("startTime") or "09:00"
+    sh, sm = (int(x) for x in start.split(":"))
+    d = after
+    for _ in range(40):                  # a monthly cadence can be weeks out
+        d = d + timedelta(days=1)
+        if _matches_day(d.date(), day_list):
+            return d.replace(hour=sh, minute=sm, second=0, microsecond=0)
+    return None

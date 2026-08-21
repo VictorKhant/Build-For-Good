@@ -517,7 +517,9 @@ function renderResult(s, result) {
       &middot; ${fmtInt(result.meals)} meals &middot; reported ${result.reportedAt}
       <br>pickup window ${result.window.from}&ndash;${result.window.to}
       &middot; good until ${result.expiresAt}
-      &middot; collected ${b.pickupAt}, served ${b.arrivesAt}</div>
+      &middot; collected ${b.pickupAt}, ${b.deferred
+        ? `held overnight, delivered <b>${b.deliversAt}</b>`
+        : `served ${b.arrivesAt}`}</div>
 
     <div class="pair">
       <div class="pair-node ${isPantry ? "pn-pantryunit" : "pn-agency"}">
@@ -580,6 +582,12 @@ function renderResult(s, result) {
 
     <button class="btn-confirm" id="confirmBtn">✓ Confirm dispatch &amp; log receipt</button>
 
+    ${b.deferred ? `<div class="rb-note">🌙 <b>Held overnight, delivered ${b.deliversAt}</b>
+      — the crew could not reach ${h ? h.location : "the block"} before standing
+      down tonight, so it goes back to ${agShort(a)} and out on their next
+      scheduled run. Costed for both trips (${b.miles.toFixed(1)} mi in total),
+      and the food is ${freshPct}% of its value by the time it is handed over.
+      This only happens when the food still keeps that long.</div>` : ""}
     ${a.kind === "agency" ? `<div class="rb-note">🚚 <b>Box truck, ${b.crew}-person crew</b>
       — a ${fmtInt(a.capacityLbs)} lb truck run is not a one-person job, and it burns
       ${C.MPG.agency} mpg against a van's ${C.MPG.pantry}. It wins here because the load
@@ -612,7 +620,11 @@ function renderResult(s, result) {
       fair market value <b>${fmt$(fmv)}</b> (${s.report.lbs} lbs &times; $${C.FMV_PER_LB}/lb).</div>
 
     <table class="rb-table">
-      <tr><td>${isPantry ? "Site" : "HQ"} &rarr; pickup &rarr; hotspot</td><td>${b.leg1.toFixed(1)} + ${b.leg2.toFixed(1)} mi</td></tr>
+      <tr><td>${b.dropoff ? "Donor &rarr; site (one leg)"
+        : (b.deferred ? "Out, back, then out again next run"
+        : `${isPantry ? "Site" : "HQ"} &rarr; pickup &rarr; hotspot &rarr; back`)}</td>
+        <td>${b.dropoff ? `${b.leg1.toFixed(1)} mi`
+          : `${b.miles.toFixed(1)} mi`}</td></tr>
       <tr><td>Drive + handling time</td><td>${fmtInt(b.driveMin)} + ${C.HANDLING_MIN} min</td></tr>
       <tr><td>Fuel (${b.miles.toFixed(1)} mi &divide; ${C.MPG[a.kind] || C.MPG.pantry} mpg
         &times; $${C.FUEL_PRICE_PER_GAL}/gal)</td><td>${fmt$(b.fuel)}</td></tr>

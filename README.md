@@ -137,6 +137,26 @@ that is exactly what it is. Stocking a pantry is worth less than feeding a
 counted block tonight, so a drop-off only outranks a routed run when that run
 genuinely was not worth making. Tonight, routed wins all 14 reports.
 
+**A run is a round trip.** The crew leaves base, collects, delivers and comes
+home, so all three legs are costed. A one-way route is not a run.
+
+**Two ways to deliver, and the clock decides.** If the crew can reach the block
+before standing down (`EVENING_CUTOFF`, 21:00), it goes straight out. If not —
+a hotel reporting at 22:24 cannot have food carried to a block that night — the
+food goes back to the agency and out on its **next scheduled run**, costed for
+both trips and with freshness measured at the later handover. Deferring is
+therefore more expensive and less fresh, so it is only chosen when going
+straight out is impossible.
+
+Pantries carry real schedules (`Daily`, `1st & 4th Thursday`, `Tuesday-Thursday`),
+so the next run can be days out. Agencies publish no hours in the roster, so a
+weekday 08:00–17:00 operation is assumed and labelled as one.
+
+**If the food will not keep that long, it is refused** with
+`EXPIRES_BEFORE_NEXT_RUN` and the donor sees which other collectors could still
+take it. Prepared food reported at 22:24 with four hours of life rejects 483
+pairs on exactly this and falls to a nearby drop-off instead.
+
 **Every run has to pay for itself**, routed or drop-off. Sorting by net value
 descending is not a viability test — without an explicit check the best of a bad
 set still wins, and a 2 lb donation gets a *−$4.39* "recommendation". A pair
