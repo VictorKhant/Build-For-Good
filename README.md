@@ -56,10 +56,10 @@ is never sent a hotspot, and neither is the public view.
 agencies and pantries; **never a hotspot**. It can request a pickup, and that
 is all: a donor offers food, it does not assign anyone's van.
 
-**Agency** — pick who you are, see the reports offered to you with your own net
-value on each, and accept them. Accepting takes the job off every other
-agency's board. Then **plan the combined run**: one vehicle, several pickups in
-the shortest legal order, then drop-offs at the blocks that need it.
+**Agency** — pick who you are, then **build a run**: add offers to it and the
+optimal route is previewed as you go. Adding is free; nothing is taken until
+you accept. **Accept books the run** — it claims every pickup, logs a receipt
+per donor and enters the ledger.
 
 **Find food** — enter an address, get the pantries near you, nearest open one
 first, with walking minutes. Pantry locations only.
@@ -74,8 +74,19 @@ is not a route. Feasible orders win outright; among them, the shortest.
 Deliveries are then assigned greedily by need-weighted value per mile of
 detour, up to what each block can still absorb tonight.
 
-Three grocery pickups on one truck: **35.8 mi, $142.07 — against $305.94 run
-separately, saving $163.87.**
+A vehicle is filled smallest-first, so a 150 lb van takes as many donors as it
+can rather than being blocked by one pallet it cannot lift; the last one aboard
+may be a **partial** take. Anything that will not fit stays on offer and is
+named.
+
+Three grocery pickups on one truck: **35.8 mi, $142.07 — against $313.49 run
+separately, saving $171.42.**
+
+**Empty miles are reported separately.** That same run is 7.2 mi carrying food
+and **28.5 mi empty** to and from a depot 19 km north — 80% deadhead. The plan
+says so, and the map draws those legs faint so they cannot be mistaken for the
+working route. A depot that far out spends most of its miles empty, and a
+closer collector will usually beat it.
 
 ## The dispatch board
 

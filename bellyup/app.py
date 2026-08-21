@@ -575,6 +575,68 @@ def plan_combined_run(agency_id: str, supplier_ids: str | None = None):
     return dispatch.combine_run(col, sups, b["hotspots"], board_now())
 
 
+@app.post("/api/board/agency/{agency_id}/preview")
+def preview_run(agency_id: str, supplier_ids: str = ""):
+    """Plan a run over a candidate set WITHOUT taking any of it.
+
+    Separate from accepting on purpose: an agency wants to see what a
+    combination looks like before it commits to any of it, and a claim that has
+    to be undone to try a different pairing is a claim that discourages trying.
+    """
+    b = board()
+    col = next((c for c in dispatch.collectors(b["agencies"], b["pantries"])
+                if c["id"] == agency_id), None)
+    if col is None:
+        raise HTTPException(404, "no such collecting agency")
+
+    wanted = [x for x in supplier_ids.split(",") if x]
+    sups = [s for s in b["suppliers"] if s["id"] in wanted and s["report"]]
+    if not sups:
+        return {"feasible": False, "reason": "nothing selected yet"}
+
+    taken = [s["name"] for s in sups
+             if (claims_mod.CLAIMS.holder(s["id"]) or agency_id) != agency_id]
+    if taken:
+        return {"feasible": False,
+                "reason": f"already taken by another agency: {', '.join(taken)}"}
+    return dispatch.combine_run(col, sups, b["hotspots"], board_now())
+
+
+@app.post("/api/board/agency/{agency_id}/accept-run")
+def accept_run(agency_id: str, supplier_ids: str = ""):
+    """Take the whole run: claim every pickup and book it into the ledger."""
+    b = board()
+    col = next((c for c in dispatch.collectors(b["agencies"], b["pantries"])
+                if c["id"] == agency_id), None)
+    if col is None:
+        raise HTTPException(404, "no such collecting agency")
+
+    wanted = [x for x in supplier_ids.split(",") if x]
+    sups = [s for s in b["suppliers"] if s["id"] in wanted and s["report"]]
+    if not sups:
+        raise HTTPException(422, "nothing selected")
+    for s in sups:
+        holder = claims_mod.CLAIMS.holder(s["id"])
+        if holder and holder != agency_id:
+            raise HTTPException(409, f"{s['name']} has already been taken")
+
+    plan = dispatch.combine_run(col, sups, b["hotspots"], board_now())
+    if not plan.get("feasible"):
+        raise HTTPException(422, plan.get("reason", "no viable run"))
+
+    receipts = dispatch.LEDGER.confirm_run(plan, sups, demo_data.CONSTANTS,
+                                           board_now())
+    # a pickup left behind for capacity stays on offer -- it has not been
+    # collected, so claiming it would strand it
+    collected = {p["id"] for p in plan["pickups"]}
+    for s in sups:
+        if s["id"] in collected:
+            claims_mod.CLAIMS.accept(s["id"], agency_id, board_now())
+    return {"plan": plan, "receipts": receipts,
+            "leftOnOffer": [s["name"] for s in sups if s["id"] not in collected],
+            "tonight": dispatch.LEDGER.deliveries}
+
+
 @app.get("/api/board/pantries")
 def board_pantries(lat: float | None = None, lon: float | None = None,
                    max_km: float = 5.0):
