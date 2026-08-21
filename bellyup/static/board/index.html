@@ -14,43 +14,35 @@
 <body>
 
 <header class="topbar">
-  <div class="brand">
-    <div class="brand-mark">Bu</div>
-    <div>
-      <div class="brand-name">BellyUp</div>
-      <div class="brand-tag">surplus food &rarr; the streets that need it &middot; San Diego</div>
-    </div>
-  </div>
-  <div class="topstats" id="topstats"></div>
-  <div class="roleswitch" id="roleSwitch">
+  <a class="brand" href="/">
+    <span class="brand-mark">Bu</span>
+    <span class="brand-name">BellyUp</span>
+  </a>
+
+  <nav class="roleswitch" id="roleSwitch" aria-label="View">
     <button data-role="business">Business</button>
     <button data-role="agency" class="on">Agency</button>
     <button data-role="public">Find food</button>
-  </div>
+  </nav>
 
-  <div class="topactions">
+  <div class="topright">
+    <div class="topstats" id="topstats"></div>
     <button class="btn-ledger" id="ledgerBtn" title="Delivery ledger">
-      &#128220; Ledger <span class="ledger-count" id="ledgerCount">0</span>
+      Ledger <span class="ledger-count" id="ledgerCount">0</span>
     </button>
-    <button class="btn-theme" id="themeBtn" title="Toggle light/dark mode">&#127769;</button>
+    <button class="btn-theme" id="themeBtn" title="Light or dark">&#127769;</button>
   </div>
-  <div class="topdate" id="topdate"></div>
 </header>
+
+<span id="topdate" hidden></span>
 
 <main class="layout">
 
   <!-- ======================= left: voluntary report feed ================ -->
   <aside class="feed">
     <div class="feed-head">
-      <h2>Tonight&rsquo;s surplus reports</h2>
-      <p class="feed-sub">Voluntary end-of-day reports from food businesses.
-        Click one to compute its dispatch.</p>
-    </div>
-    <!-- ===================== agency: pick who you are ================= -->
-    <div class="agencybar" id="agencyBar" hidden>
-      <label for="agencySel">You are</label>
-      <select id="agencySel"></select>
-      <div class="agencybar-sub" id="agencyStats"></div>
+      <h2 id="feedTitle">Tonight&rsquo;s surplus reports</h2>
+      <p class="feed-sub" id="feedSub">Voluntary end-of-day reports from food businesses.</p>
     </div>
 
     <!-- ===================== public: where are you ==================== -->
@@ -58,6 +50,12 @@
       <label for="pubAddr">Where are you?</label>
       <input id="pubAddr" placeholder="e.g. 16th &amp; Market, San Diego">
       <div class="reg-hint" id="pubGeo">Type an address and press Enter.</div>
+      <label for="pubRange" style="margin-top:9px">Within</label>
+      <select id="pubRange">
+        <option value="2">2 km</option>
+        <option value="5" selected>5 km</option>
+        <option value="10">10 km</option>
+      </select>
       <div class="publicbar-note">Pantry locations only &mdash; outreach
         locations are never shown here.</div>
     </div>

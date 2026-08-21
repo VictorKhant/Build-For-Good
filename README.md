@@ -52,17 +52,24 @@ A role switcher in the header. What each role may see is enforced on the
 server, not just hidden in the UI — a business asking for `/api/board/business`
 is never sent a hotspot, and neither is the public view.
 
-**Business** — report surplus and watch it get taken. Sees other donors,
-agencies and pantries; **never a hotspot**. It can request a pickup, and that
-is all: a donor offers food, it does not assign anyone's van.
+The left panel always answers *which one of these am I looking at*; the right
+panel is where that role does its work.
 
-**Agency** — pick who you are, then **build a run**: add offers to it and the
-optimal route is previewed as you go. Adding is free; nothing is taken until
-you accept. **Accept books the run** — it claims every pickup, logs a receipt
-per donor and enters the ledger.
+**Business** — the left lists tonight's restaurants. Click one and its match
+appears **beside it**: which agency is collecting, when, how far, and the
+estimated deduction. The map draws that one line, agency to restaurant, and
+nothing else. Never a hotspot. A donor offers food; it does not assign anyone's
+van.
 
-**Find food** — enter an address, get the pantries near you, nearest open one
-first, with walking minutes. Pantry locations only.
+**Agency** — the left lists the collectors; pick which one you are. Everything
+offered to you appears on the right, where you **build a run**: add offers and
+the optimal route previews as you go, or take a single job with *Accept just
+this*. Adding is free — only accepting books anything.
+
+**Find food** — an address on the left, and the closest open pantry called out
+under it. Every option within range is listed on the right, ranked by distance,
+and the map draws the way from where you are to the nearest one. Pantry
+locations only.
 
 ### Combining trips
 
