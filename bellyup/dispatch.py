@@ -562,6 +562,41 @@ def serialisable(result: dict, top: int = 12) -> dict:
 # combining several accepted pickups into one run
 # --------------------------------------------------------------------------
 
+EXACT_ORDER_LIMIT = 8   # 8! = 40,320 orderings, still instant
+
+
+def _greedy_order(pool, bounds, collector, now, c, leg):
+    """Window-aware nearest neighbour, for baskets too large to enumerate.
+
+    At each step take the nearest pickup whose window is still open on arrival;
+    if none is, take the one closing soonest and record the miss. Approximate
+    by construction -- it is the fallback, not the method.
+    """
+    remaining = list(range(len(pool)))
+    order, missed = [], []
+    at, t = collector, now
+
+    while remaining:
+        reachable = []
+        for i in remaining:
+            d = leg(at, pool[i])
+            arrive = t + timedelta(minutes=d / c["AVG_SPEED_MPH"] * 60)
+            opens, closes = bounds[pool[i]["id"]]
+            reachable.append((arrive <= closes, d, closes, i, arrive))
+        # prefer feasible, then nearest; if none feasible, whichever shuts first
+        reachable.sort(key=lambda r: (not r[0], r[1] if r[0] else r[2]))
+        ok, d, _closes, i, arrive = reachable[0]
+        if not ok:
+            missed.append(pool[i]["name"])
+        opens, _ = bounds[pool[i]["id"]]
+        t = max(arrive, opens) + timedelta(minutes=c["HANDLING_MIN"] / 2)
+        at = pool[i]
+        order.append(i)
+        remaining.remove(i)
+
+    return order, missed
+
+
 def combine_run(collector: dict, suppliers: list[dict], hotspots: list[dict],
                 now: datetime, ledger: "Ledger | None" = None,
                 cfg: dict | None = None, max_stops: int = 3) -> dict:
@@ -631,7 +666,10 @@ def combine_run(collector: dict, suppliers: list[dict], hotspots: list[dict],
             t += timedelta(days=1)
         return f, t
 
-    pool = loaded if len(loaded) <= 6 else loaded[:6]
+    # Every loaded pickup is ordered -- none is dropped. Truncating the pool
+    # silently lost the 7th pickup onward from a run the driver had already
+    # agreed to collect, which is worse than ordering it imperfectly.
+    pool = loaded
     bounds = {s["id"]: window_bounds(s) for s in pool}
 
     def evaluate(order):
@@ -649,13 +687,21 @@ def combine_run(collector: dict, suppliers: list[dict], hotspots: list[dict],
             prev = x
         return dist, missed
 
-    best = None
-    for order in permutations(range(len(pool))):
-        dist, missed = evaluate(order)
-        key = (len(missed), dist)
-        if best is None or key < best[0]:
-            best = (key, list(order), missed)
-    best_order, missed_windows = best[1], best[2]
+    # 8! = 40,320 orderings is still instant, and one vehicle taking more than
+    # eight pickups in an evening is beyond what this demo models. Above that,
+    # fall back to a window-aware nearest-neighbour pass: not provably optimal,
+    # but it orders every pickup instead of discarding some.
+    if len(pool) <= EXACT_ORDER_LIMIT:
+        best = None
+        for order in permutations(range(len(pool))):
+            dist, missed = evaluate(order)
+            key = (len(missed), dist)
+            if best is None or key < best[0]:
+                best = (key, list(order), missed)
+        best_order, missed_windows = best[1], best[2]
+    else:
+        best_order, missed_windows = _greedy_order(pool, bounds, collector,
+                                                  now, c, leg)
     pickups = [pool[i] for i in best_order]
 
     # --- deliveries -----------------------------------------------------

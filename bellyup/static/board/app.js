@@ -8,7 +8,7 @@
 
 "use strict";
 
-let HOTSPOTS = [], SUPPLIERS = [], AGENCIES = [], PANTRIES = [], C = {};
+let HOTSPOTS = [], SUPPLIERS = [], AGENCIES = [], PANTRIES = [], C = {}, CLAIMS = {};
 let HISTORY = [], tonight = [], OPTED_OUT = 0;
 let CANDIDATES = [], REPORTING = [], COLLECTORS = [];
 
@@ -23,6 +23,7 @@ async function loadBoard() {
   HOTSPOTS = b.hotspots; SUPPLIERS = b.suppliers;
   AGENCIES = b.agencies; PANTRIES = b.pantries; C = b.constants;
   HISTORY = b.history || []; tonight = b.tonight || [];
+  CLAIMS = b.claims || {};
   OPTED_OUT = b.optedOut || 0;
   CANDIDATES = HOTSPOTS.filter(h => h.need >= C.MIN_CANDIDATE_NEED);
   REPORTING = SUPPLIERS.filter(s => s.report);
@@ -177,8 +178,12 @@ for (const a of AGENCIES) {
   );
 }
 
-/* mobile pantry sites — violet diamonds; solid = unit available tonight */
-for (const p of PANTRIES) {
+/* mobile pantry sites — violet diamonds; solid = unit available tonight.
+   Agency-view only, same reasoning as hotspots above: the public/find-food
+   view builds its OWN pantry markers from the search result (renderPantries)
+   so only pantries within the searched range ever show there, and only
+   after a search -- these always-on markers would defeat that. */
+for (const p of (role === "agency" ? PANTRIES : [])) {
   const cls = p.dispatchable ? "mk-pantry" : "mk-pantry idle";
   const status = p.dispatchable
     ? '<br><b class="tip-pantry">mobile unit available tonight</b>'
@@ -193,8 +198,12 @@ for (const p of PANTRIES) {
   );
 }
 
-/* supplier markers — the "input markers", always on the map */
-for (const s of SUPPLIERS) {
+/* supplier markers ("input markers") — business view only. Clicking one on
+   the map does exactly what clicking it in the left sidebar does
+   (pickRestaurant): same selection, same agency-only route. Never jumps to
+   the ledger -- a restaurant already collected/delivered just shows that
+   status inline (renderBusiness), the same as any other restaurant. */
+for (const s of (role === "business" ? SUPPLIERS : [])) {
   const cls = s.report ? "mk-supplier" : "mk-supplier quiet";
   const m = L.marker([s.lat, s.lon], {
     icon: L.divIcon({ className: "", html: `<div class="${cls}" id="sp-${s.id}"></div>`, iconSize: [14, 14], iconAnchor: [7, 7] }),
@@ -209,7 +218,7 @@ for (const s of SUPPLIERS) {
   );
   m.on("click", () => {
     if (!s.report) return openForm(s);
-    if (dispatchedSupplierIds().has(s.id)) openLedger(); else selectReport(s);
+    pickRestaurant(s.id);
   });
 }
 
@@ -897,7 +906,9 @@ function closeForm() {
 async function refreshAll() {
   await loadBoard();
   buildLayers();
-  renderFeed();
+  if (role === "agency") await loadOffers();
+  else if (role === "public") await renderPantries();
+  else renderBusiness();
   renderStats();
   refreshHotspots();
   $("ledgerCount").textContent = tonight.length;
@@ -1014,8 +1025,7 @@ function wireForm() {
       }
       closeForm();
       await refreshAll();
-      selectedId = null;
-      await selectReport(supplier, { force: true });
+      await pickRestaurant(supplier.id);
     } catch (e2) {
       err.textContent = e2.message;
       err.hidden = false;
@@ -1078,7 +1088,10 @@ function setRole(next) {
   clearFx();
   showEmpty(EMPTY_BY_ROLE[next]);
   buildLayers();
-  if (next === "agency") loadOffers();
+  if (next === "agency") {
+    const list = collectingList();
+    selectAgency(myAgency || (list[0] && list[0].id));
+  }
   else if (next === "public") renderPantries();
   else { renderBusiness(); }
 }
@@ -1090,19 +1103,25 @@ function renderBusiness() {
 
   $("feed").innerHTML = `
     <div class="sec-head">Reporting tonight (${reporting.length})</div>
-    ${reporting.map(s => `
+    ${reporting.map(s => {
+      const delivered = tonight.find(r => r.supplierId === s.id);
+      const claim = CLAIMS[s.id];
+      const claimAgency = claim && AGENCIES.find(a => a.id === claim.agency_id);
+      const statusLine = delivered
+        ? `<b style="color:var(--c-route)">collected by ${delivered.collector}</b>`
+        : claimAgency
+        ? `<b style="color:var(--c-route)">claimed by ${claimAgency.name} &middot; pickup pending</b>`
+        : "waiting for an agency";
+      return `
       <div class="offer pick ${selectedId === s.id ? "on" : ""}" data-pick="${s.id}">
         <div class="offer-top">
           <span>${typeIcon[s.type] || "🍽"}</span>
           <span class="offer-name">${s.name}</span>
           <span class="offer-net">${fmtInt(s.report.lbs)} lb</span>
         </div>
-        <div class="offer-sub">${s.report.items || ""}<br>
-          ${s.status === "accepted"
-            ? `<b style="color:var(--c-route)">accepted by ${s.acceptedBy || "an agency"}</b>`
-            : s.status === "delivered" ? "delivered" : "waiting for an agency"}</div>
+        <div class="offer-sub">${s.report.items || ""}<br>${statusLine}</div>
         ${selectedId === s.id && s.__match ? bizMatch(s) : ""}
-      </div>`).join("")}
+      </div>`; }).join("")}
     ${quiet.length ? `<div class="sec-head">Quiet tonight (${quiet.length})</div>
       ${quiet.map(s => `
         <button class="quiet-row" data-edit="${s.id}">
@@ -1191,6 +1210,17 @@ function collectingList() {
   ];
 }
 
+/* Select a collector and show what is offered to it.
+   NOT auto-basketed: on this branch an offer is visible to every agency that
+   could take it, and whoever accepts first gets it (see claims.py). Filling
+   the basket on selection would therefore propose a run over all fourteen
+   reports and immediately leave most of them behind on capacity. The driver
+   adds what they want. */
+async function selectAgency(id) {
+  myAgency = id; basket = []; planned = null;
+  await loadOffers();
+}
+
 /* LEFT: who you are. Same shape as the restaurant list in the business view,
    so the left panel always answers "which one of these am I looking at". */
 function renderAgencyList() {
@@ -1208,9 +1238,7 @@ function renderAgencyList() {
           ? ` · ${offers.agency.capacityLbs} lb capacity` : ""}</div>
       </div>`).join("");
   $("feed").querySelectorAll("[data-agency]").forEach(el =>
-    el.addEventListener("click", () => {
-      myAgency = el.dataset.agency; basket = []; planned = null; loadOffers();
-    }));
+    el.addEventListener("click", () => selectAgency(el.dataset.agency)));
   $("feedFoot").innerHTML =
     `<span class="dot dot-quiet"></span> Pick a collector to see what is offered to it.`;
 }
@@ -1294,6 +1322,7 @@ async function previewRun() {
 /* Only accepting books anything. Everything before this is a sketch. */
 async function acceptRun(ids) {
   if (!ids || !ids.length) return;
+  const acceptedPlan = planned;   // about to be reset -- keep it to draw bold below
   try {
     const res = await api(
       `/api/board/agency/${myAgency}/accept-run?supplier_ids=${ids.join(",")}`,
@@ -1306,9 +1335,135 @@ async function acceptRun(ids) {
     if (res.leftOnOffer.length)
       alert("Too much for one load — still on offer: " + res.leftOnOffer.join(", "));
     loadOffers();
+    /* Now real: redraw the same route bold and animated instead of faded --
+       "this is taken" should look different from "this is proposed". */
+    if (acceptedPlan && acceptedPlan.feasible) drawPlan(acceptedPlan, { faded: false });
     openLedger();
   } catch (e) { alert(e.message); }
 }
+
+/* -------------------------------------------------------- combined run */
+/* combine_run()'s output (bellyup/dispatch.py), rendered the same way
+   renderResult() renders a single dispatch: an eyebrow, an outcomes strip,
+   rb-note callouts for anything that needs explaining, then the cost table. */
+function renderPlan(planned) {
+  if (!planned.feasible) {
+    return `<div class="rb-note" style="border-color:var(--bad);">
+      &times; <b>Not feasible</b> &mdash; ${planned.reason}</div>`;
+  }
+  const isPantry = planned.collector.kind === "pantry";
+  const pickupRows = planned.pickups.map((p, i) => `
+    <div class="alt-row">
+      <span class="alt-rank">${i + 1}.</span>
+      <span class="alt-pair"><b>${p.name}</b> &mdash; ${fmtInt(p.lbs)} lb${
+        p.lbs < p.offeredLbs ? ` of ${fmtInt(p.offeredLbs)}` : ""} &middot; ${p.window}</span>
+    </div>`).join("");
+  const stopRows = planned.stops.map((s, i) => `
+    <div class="alt-row">
+      <span class="alt-rank">${planned.pickups.length + i + 1}.</span>
+      <span class="alt-pair"><b>${s.location}</b> &middot; ${s.area} &mdash;
+        ${fmtInt(s.meals)} meals &middot; ${s.detourMi.toFixed(1)} mi detour</span>
+    </div>`).join("");
+
+  return `
+    <div class="rb-h">Pickups, in order (${planned.pickups.length})</div>
+    ${pickupRows}
+    <div class="rb-h">Drop-offs, in order (${planned.stops.length})</div>
+    ${stopRows}
+
+    <div class="outcomes">
+      <div class="oc oc-people"><div class="v">${fmtInt(planned.servedMeals)}</div><div class="k">people fed</div></div>
+      <div class="oc"><div class="v">${planned.miles.toFixed(1)}</div><div class="k">route miles</div></div>
+      <div class="oc oc-net ${planned.net < 0 ? "neg" : ""}"><div class="v">${fmt$(planned.net)}</div><div class="k">net benefit</div></div>
+    </div>
+
+    ${planned.saved > 0 ? `<div class="rb-note">💰 <b>${fmt$(planned.saved)} saved</b> by combining
+      ${planned.pickups.length} pickups into one run instead of ${planned.pickups.length}
+      separate trips (would have cost ${fmt$(planned.soloCost)}).</div>` : ""}
+    ${planned.partial ? `<div class="rb-note">🚐 <b>Partial take &mdash; ${planned.partial.name}</b>:
+      collected ${fmtInt(planned.partial.took)} of ${fmtInt(planned.partial.of)} lb offered;
+      ${fmtInt(planned.partial.leaves)} lb stays with the donor.</div>` : ""}
+    ${planned.leftBehind.length ? `<div class="rb-note">📦 <b>Left behind (no room this run):</b>
+      ${planned.leftBehind.map(x => `${x.name} (${fmtInt(x.lbs)} lb)`).join(", ")}.</div>` : ""}
+    ${planned.missedWindows.length ? `<div class="rb-note" style="border-color:var(--bad);">
+      ⏱ <b>Missed pickup windows:</b> ${planned.missedWindows.join(", ")} &mdash; shown is the
+      fewest-misses, then-shortest order available for this basket.</div>` : ""}
+    ${planned.leftoverMeals >= 1 ? `<div class="rb-note">🎯 Block need absorbs
+      ${fmtInt(planned.servedMeals)} meals; <b>${fmtInt(planned.leftoverMeals)} meals</b> ride
+      along to ${agShort(planned.collector)}&rsquo;s network.</div>` : ""}
+
+    <table class="rb-table">
+      <tr><td>Working miles / deadhead</td><td>${planned.workingMi.toFixed(1)} / ${planned.deadheadMi.toFixed(1)} mi</td></tr>
+      <tr><td>Drive + handling time</td><td>${fmtInt(planned.minutes)} min</td></tr>
+      <tr><td>Fuel</td><td>${fmt$(planned.fuel)}</td></tr>
+      <tr><td>Vehicle wear</td><td>${fmt$(planned.vehicle)}</td></tr>
+      <tr><td>Crew (${planned.crew})</td><td>${fmt$(planned.labor)}</td></tr>
+      <tr class="total"><td>Deployment cost</td><td>${fmt$(planned.cost)}</td></tr>
+    </table>`;
+}
+
+/* Pickup phase (collector -> pickups, in solved order) in the agency/pantry
+   role color; delivery phase (last pickup -> stops, in order -> back to
+   collector) in route-green -- reuses the exact route-leg1/route-leg2
+   flowing-dash classes runTriangulation() already uses for a single leg
+   each, just looped over several legs so a multi-stop run is still
+   unambiguous about which direction is "out" vs. "back" without needing
+   real street routing. */
+function drawPlan(planned, opts = {}) {
+  /* Faded + static by default: this is a PROPOSED run, not yet taken -- the
+     driver hasn't committed to it. Once accept-run actually confirms it,
+     the caller passes {faded:false} and the same route redraws bold and
+     animated (route-leg1/route-leg2's existing flowing-dash), so "this is
+     real now" is a visible state change, not just a modal popping up. */
+  const faded = opts.faded !== false;
+  clearFx();
+  const col = planned.collector;
+
+  const pickupChain = [col, ...planned.pickups];
+  for (let i = 0; i < pickupChain.length - 1; i++) {
+    const a = pickupChain[i], b = pickupChain[i + 1];
+    fxLayer.addLayer(L.polyline([[a.lat, a.lon], [b.lat, b.lon]], {
+      color: themeColor(isPantryKind(col) ? "--c-pantry" : "--c-agency"),
+      weight: faded ? 2 : 2.5, opacity: faded ? 0.4 : 0.9,
+      className: faded ? "route-leg1-faded" : "route-leg1", interactive: false,
+    }));
+  }
+
+  const deliveryChain = [pickupChain[pickupChain.length - 1], ...planned.stops, col];
+  for (let i = 0; i < deliveryChain.length - 1; i++) {
+    const a = deliveryChain[i], b = deliveryChain[i + 1];
+    fxLayer.addLayer(L.polyline([[a.lat, a.lon], [b.lat, b.lon]], {
+      color: themeColor("--c-route"),
+      weight: faded ? 2.5 : 3, opacity: faded ? 0.45 : 0.95,
+      className: faded ? "route-leg2-faded" : "route-leg2", interactive: false,
+    }));
+  }
+
+  planned.pickups.forEach((p, i) => {
+    fxLayer.addLayer(L.marker([p.lat, p.lon], {
+      icon: L.divIcon({ className: "", iconSize: [20, 20], iconAnchor: [10, 10],
+        html: `<div class="mk-stopnum pickup">${i + 1}</div>` }),
+      interactive: false, zIndexOffset: 850,
+    }));
+  });
+  planned.stops.forEach((s, i) => {
+    fxLayer.addLayer(L.marker([s.lat, s.lon], {
+      icon: L.divIcon({ className: "", iconSize: [20, 20], iconAnchor: [10, 10],
+        html: `<div class="mk-stopnum dropoff">${planned.pickups.length + i + 1}</div>` }),
+      interactive: false, zIndexOffset: 850,
+    }));
+    if (hotspotMarkers[s.id]) {
+      const el = hotspotMarkers[s.id].getElement();
+      if (el) el.classList.add("hs-winner");
+    }
+  });
+  const colEl = $("col-" + col.id);
+  if (colEl) colEl.classList.add("winner");
+
+  const bounds = [col, ...planned.pickups, ...planned.stops].map(p => [p.lat, p.lon]);
+  map.flyToBounds(L.latLngBounds(bounds).pad(0.15), { duration: 0.6 });
+}
+function isPantryKind(col) { return col.kind === "pantry"; }
 
 function drawAgencyMarkers() {
   const a = (offers.agency || {});
@@ -1319,52 +1474,71 @@ function drawAgencyMarkers() {
 
 /* --------------------------------------------------------------- public */
 let myPlace = null;
+let selectedPantryId = null;
 
 async function renderPantries() {
   if (!myPlace) {
+    selectedPantryId = null;
     $("feed").innerHTML = `<div class="empty">Enter your address above.</div>`;
     $("feedFoot").innerHTML = "";
     showEmpty(EMPTY_BY_ROLE.public);
+    clearFx();
     return;
   }
   const km = +($("pubRange")?.value || 5);
   const r = await api(`/api/board/pantries?lat=${myPlace.lat}&lon=${myPlace.lon}&max_km=${km}`);
   const list = r.pantries;
   const nearest = list.find(p => p.openTonight) || list[0];
+  /* fall back to nearest if nothing picked yet, or the pick fell outside
+     the current range (new address, or the range slider narrowed) */
+  const picked = list.find(p => p.id === selectedPantryId) || nearest;
+  selectedPantryId = picked ? picked.id : null;
 
-  $("feed").innerHTML = nearest ? `
-    <div class="sec-head">Closest to you</div>
-    <div class="pantry closest">
-      <div class="pantry-badge">GO HERE</div>
-      <div class="pantry-name">${nearest.name}</div>
-      <div class="pantry-sub">${nearest.distanceKm} km · about
-        ${nearest.walkMinutes} min walk</div>
-      <div class="pantry-far">${nearest.kind}${nearest.schedule ? " · " + nearest.schedule : ""}</div>
-    </div>` : `<div class="empty">Nothing within ${km} km.</div>`;
+  /* LEFT: every pantry in range, clickable -- picking one redraws the route */
+  $("feed").innerHTML = list.length ? `
+    <div class="sec-head">${list.length} pantr${list.length === 1 ? "y" : "ies"} within ${km} km</div>
+    ${list.map(p => `
+      <div class="offer pick ${p.id === selectedPantryId ? "on" : ""}" data-pick="${p.id}">
+        <div class="offer-top">
+          <span>${p === nearest ? "\u{1F4CD}" : "\u{1F37D}"}</span>
+          <span class="offer-name">${p.name}</span>
+          <span class="offer-net">${p.distanceKm} km</span>
+        </div>
+        <div class="offer-sub">${p.walkMinutes} min walk ·
+          ${p.openTonight ? "open tonight" : "not open tonight"}
+          ${p === nearest ? " · closest open" : ""}</div>
+      </div>`).join("")}` : `<div class="empty">Nothing within ${km} km.</div>`;
   $("feedFoot").innerHTML =
     `<span class="dot dot-quiet"></span> Pantry locations only.`;
 
-  /* RIGHT: every pantry in range */
+  $("feed").querySelectorAll("[data-pick]").forEach(el =>
+    el.addEventListener("click", () => {
+      selectedPantryId = el.dataset.pick;
+      renderPantries();
+    }));
+
+  /* RIGHT: detail on whichever pantry is selected */
   $("resultEmpty").style.display = "none";
   $("resultBody").hidden = false;
-  $("resultBody").innerHTML = `
-    <div class="rb-eyebrow">Food near you</div>
+  $("resultBody").innerHTML = picked ? `
+    <div class="rb-eyebrow">${picked === nearest ? "Closest to you" : "Your pick"}</div>
     <div class="rb-source">${r.count} within ${km} km · ${r.openNow} open tonight</div>
-    ${list.length ? list.map((p, i) => `
-      <div class="pantry ${p === nearest ? "closest" : ""}">
-        <div class="pantry-name">${i + 1}. ${p.name}</div>
-        <div class="pantry-sub">${p.distanceKm} km · ${p.walkMinutes} min walk ·
-          ${p.openTonight ? "open tonight" : "not open tonight"}</div>
-        <div class="pantry-far">${p.kind}${p.schedule ? " · runs " + p.schedule : ""}${
-          p.whyNot ? " · " + p.whyNot : ""}</div>
-      </div>`).join("") : `<div class="empty">Try a wider range.</div>`}`;
+    <div class="pantry closest">
+      ${picked === nearest ? `<div class="pantry-badge">GO HERE</div>` : ""}
+      <div class="pantry-name">${picked.name}</div>
+      <div class="pantry-sub">${picked.distanceKm} km · about
+        ${picked.walkMinutes} min walk ·
+        ${picked.openTonight ? "open tonight" : "not open tonight"}</div>
+      <div class="pantry-far">${picked.kind}${picked.schedule ? " · runs " + picked.schedule : ""}${
+        picked.whyNot ? " · " + picked.whyNot : ""}</div>
+    </div>` : `<div class="empty">Try a wider range.</div>`;
 
   clearFx();
   list.forEach(p => fxLayer.addLayer(L.circleMarker([p.lat, p.lon], {
-    radius: p === nearest ? 11 : 7,
-    color: themeColor(p === nearest ? "--c-route" : "--c-pantry"),
-    weight: p === nearest ? 3 : 1.5,
-    fillOpacity: p === nearest ? .35 : .18,
+    radius: p.id === selectedPantryId ? 11 : 7,
+    color: themeColor(p.id === selectedPantryId ? "--c-route" : "--c-pantry"),
+    weight: p.id === selectedPantryId ? 3 : 1.5,
+    fillOpacity: p.id === selectedPantryId ? .35 : .18,
   }).bindTooltip(`<b>${p.name}</b><div class="tip-k">${p.distanceKm} km · ${p.walkMinutes} min walk</div>`,
                  { className: "hs-tip", direction: "top", opacity: 1 })));
 
@@ -1372,13 +1546,13 @@ async function renderPantries() {
     radius: 6, color: themeColor("--c-supplier"), weight: 3,
     fillOpacity: .9, interactive: false }));
 
-  /* the way to the nearest one, so it is obvious where to walk */
-  if (nearest) {
-    fxLayer.addLayer(L.polyline([[myPlace.lat, myPlace.lon], [nearest.lat, nearest.lon]], {
+  /* the way to whichever pantry is selected, so it is obvious where to walk */
+  if (picked) {
+    fxLayer.addLayer(L.polyline([[myPlace.lat, myPlace.lon], [picked.lat, picked.lon]], {
       color: themeColor("--c-route"), bellyRole: "--c-route",
       weight: 3.5, opacity: .95, className: "route-leg2", interactive: false }));
     map.flyToBounds(L.latLngBounds(
-      [[myPlace.lat, myPlace.lon], [nearest.lat, nearest.lon]]).pad(0.45),
+      [[myPlace.lat, myPlace.lon], [picked.lat, picked.lon]]).pad(0.45),
       { duration: 0.7 });
   }
   renderStats();
@@ -1397,6 +1571,7 @@ function wireRoles() {
     try {
       const d = await api("/api/geocode?address=" + encodeURIComponent(q));
       myPlace = { lat: d.lat, lon: d.lon };
+      selectedPantryId = null;
       hint.className = "reg-hint ok";
       hint.textContent = "\u{1F4CD} " + d.matched;
       renderPantries();
