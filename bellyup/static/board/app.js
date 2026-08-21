@@ -425,20 +425,32 @@ function runTriangulation(s, result, token) {
     fxLayer.eachLayer(l => { if (l.options.className === "short-line") fxLayer.removeLayer(l); });
 
     const a = best.collector, h = best.hotspot;
-    fxLayer.addLayer(L.polyline([[a.lat, a.lon], [s.lat, s.lon]], {
-      color: themeColor(a.kind === "pantry" ? "--c-pantry" : "--c-agency"),
-      bellyRole: a.kind === "pantry" ? "--c-pantry" : "--c-agency",
-      weight: 2.5, opacity: 0.85, className: "route-leg1", interactive: false,
-    }));
-    fxLayer.addLayer(L.polyline([[s.lat, s.lon], [h.lat, h.lon]], {
-      color: themeColor("--c-route"), bellyRole: "--c-route",
-      weight: 3.5, opacity: 0.95, className: "route-leg2", interactive: false,
-    }));
-    $("col-" + a.id).classList.add("winner");
-    const hEl = hotspotMarkers[h.id].getElement();
-    if (hEl) hEl.classList.add("hs-winner");
+    const role = best.dropoff ? "--c-agency"
+      : (a.kind === "pantry" ? "--c-pantry" : "--c-agency");
 
-    map.flyToBounds(L.latLngBounds([[a.lat, a.lon], [s.lat, s.lon], [h.lat, h.lon]]).pad(0.18), { duration: 0.8 });
+    /* A drop-off is one leg: the food goes to the site and people come to it.
+       Drawing a second leg would imply a delivery run that never happens. */
+    fxLayer.addLayer(L.polyline([[s.lat, s.lon], [a.lat, a.lon]], {
+      color: themeColor(role), bellyRole: role,
+      weight: best.dropoff ? 3.5 : 2.5, opacity: 0.9,
+      className: best.dropoff ? "route-leg2" : "route-leg1", interactive: false,
+    }));
+    if (h) {
+      fxLayer.addLayer(L.polyline([[s.lat, s.lon], [h.lat, h.lon]], {
+        color: themeColor("--c-route"), bellyRole: "--c-route",
+        weight: 3.5, opacity: 0.95, className: "route-leg2", interactive: false,
+      }));
+    }
+    const colEl = $("col-" + a.id);
+    if (colEl) colEl.classList.add("winner");
+    if (h && hotspotMarkers[h.id]) {
+      const hEl = hotspotMarkers[h.id].getElement();
+      if (hEl) hEl.classList.add("hs-winner");
+    }
+
+    const bounds = [[a.lat, a.lon], [s.lat, s.lon]];
+    if (h) bounds.push([h.lat, h.lon]);
+    map.flyToBounds(L.latLngBounds(bounds).pad(0.18), { duration: 0.8 });
 
     renderResult(s, result);
     setTimeout(() => { if (live()) $("calcOverlay").classList.remove("show"); }, 2600);
@@ -453,14 +465,15 @@ function renderResult(s, result) {
   const boostPct = Math.round((b.boost - 1) * 100);
   const fmv = result.fmv;
   const freshPct = Math.round(b.freshness * 100);
-  const servedBefore = servedMealsTonight(h.id);
+  const servedBefore = h ? servedMealsTonight(h.id) : 0;
 
   /* alternates: next best pairs with a distinct collector or hotspot */
   const alts = [];
   for (const p of result.pairs.slice(1)) {
     if (alts.length === 3) break;
     /* compare by id: these came off the wire, not from the same objects */
-    if (p.collector.id !== a.id || p.hotspot.id !== h.id) alts.push(p);
+    const sameTarget = p.hotspot && h ? p.hotspot.id === h.id : (!p.hotspot && !h);
+    if (p.collector.id !== a.id || !sameTarget) alts.push(p);
   }
 
   $("resultBody").innerHTML = `
@@ -490,7 +503,7 @@ function renderResult(s, result) {
         </div>
       </div>
       <div class="pair-arrow"></div>
-      <div class="pair-node pn-hotspot">
+      ${h ? `<div class="pair-node pn-hotspot">
         <div class="pn-badge">📍</div>
         <div>
           <div class="pn-role">Distribution hotspot</div>
@@ -499,7 +512,14 @@ function renderResult(s, result) {
             &middot; food access ${h.accessDays.toFixed(h.accessDays % 1 ? 1 : 0)} d/wk${
               servedBefore > 0 ? ` &middot; ${fmtInt(servedBefore)} meals already tonight` : ""}</div>
         </div>
-      </div>
+      </div>` : `<div class="pair-node pn-dropoff">
+        <div class="pn-badge">🏛</div>
+        <div>
+          <div class="pn-role">Fixed drop-off</div>
+          <div class="pn-name">${a.name}</div>
+          <div class="pn-sub">people collect here — no distribution run tonight</div>
+        </div>
+      </div>`}
     </div>
 
     <div class="outcomes">
@@ -525,6 +545,12 @@ function renderResult(s, result) {
 
     <button class="btn-confirm" id="confirmBtn">✓ Confirm dispatch &amp; log receipt</button>
 
+    ${b.dropoff ? `<div class="rb-note">🏛 <b>Fixed drop-off — one leg, no distribution run</b>
+      — ${a.name} has no collection vehicle, so this is scored on the
+      ${b.miles.toFixed(1)} mi between the donor and the site alone. Stocking a
+      pantry is credited at ${Math.round(C.DROPOFF_CREDIT * 100)}% of feeding a
+      counted block tonight, so this only wins when no hotspot run was worth
+      making.</div>` : ""}
     <div class="rb-note">⏱ <b>${b.hoursToPeople}h from report to served</b> —
       arrives ${b.arrivesAt}, ${freshPct}% of its value intact against a
       ${result.expiresAt} expiry. Reward is scaled by that.</div>
@@ -533,7 +559,7 @@ function renderResult(s, result) {
     ${servedBefore > 0 ? `<div class="rb-note">🎯 <b>Serving limit</b> — this block already received
       ${fmtInt(servedBefore)} meals tonight; only its remaining need of ${b.remaining.toFixed(1)}
       counts toward the reward.</div>` : ""}
-    ${boostPct > 0 ? `<div class="rb-note">⚡ <b>Access-gap boost +${boostPct}%</b> — this block has
+    ${h && boostPct > 0 ? `<div class="rb-note">⚡ <b>Access-gap boost +${boostPct}%</b> — this block has
       scheduled food access only ${h.accessDays.toFixed(h.accessDays % 1 ? 1 : 0)} days/week, so its
       reward is weighted up.</div>` : ""}
     ${b.uncollectedLbs >= 1 ? `<div class="rb-note">🚐 <b>Unit capacity ${a.capacityLbs} lbs</b> —

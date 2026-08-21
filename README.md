@@ -109,11 +109,21 @@ preference for either.
 on: `PICKUP_WINDOW_MISSED`, `EXPIRES_BEFORE_SERVED`, `TRANSIT_TOO_LONG`,
 `BLOCK_NEED_MET`, `NO_PREPARED_HANDLING`.
 
-**`mobile_capable`** decides who can be dispatched. An agency with a vehicle can
-be sent to a restaurant and on to a hotspot. One marked `no` is a fixed site
-that receives donations — it is drawn as a hollow square rather than a truck,
-and never enters the collector pool. Giving it a box truck would invent a fleet
-it does not have.
+**`mobile_capable`** decides who can be dispatched, and it changes the shape of
+the match. An agency with a vehicle runs two legs — out to the restaurant, on to
+a hotspot. One marked `no` is a fixed site with no vehicle, so it is **one leg**:
+the food goes to the site and people come to it. There is no hotspot to serve
+and no distribution run to cost.
+
+A drop-off is credited at `DROPOFF_CREDIT` (0.5) — the same rate the model
+already gives overflow meals that "ride along to the pantry network", because
+that is exactly what it is. Stocking a pantry is worth less than feeding a
+counted block tonight, so a drop-off only outranks a routed run when that run
+genuinely was not worth making. Tonight, routed wins all 14 reports.
+
+A drop-off still has to pay for itself. If the site is far enough that the run
+costs more than the food is worth, it is refused with `DROPOFF_NOT_WORTH_IT` —
+moving food to a pantry you cannot afford to reach is not a rescue.
 
 **Serving limits** come out of the ledger, and they answer two different
 questions. A block only holds so many people, so once its need is met further

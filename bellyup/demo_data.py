@@ -72,6 +72,7 @@ CONSTANTS = {
     "PANTRY_CAPACITY_LBS": 150,   # pantry van / mobile unit
     "DEMO_DATE": "2026-08-20",    # the fixed demo evening (a 3rd Thursday)
     "MAX_DROPS_PER_NIGHT": 2,     # serving limit: deliveries per hotspot per night
+    "DROPOFF_CREDIT": 0.5,        # value of stocking a pantry vs feeding a block tonight
 
     # --- added by the merge: the donor now states expiry and a pickup window,
     # so time has to enter the model ---
