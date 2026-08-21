@@ -29,11 +29,16 @@ open demo/index.html                 # or: python3 -m http.server → http://loc
 
 Internet access is needed for map tiles (CARTO/OSM), Leaflet, and fonts.
 
-Click a surplus report in the left feed (or an orange marker on the map): the
+Click a surplus report in the left feed (or a supplier marker on the map): the
 app animates a triangulation pass over 8 collectors × 161 candidate blocks,
 then locks the best collector → hotspot dispatch and shows the full score
 breakdown — people fed, route, deployment cost, tax-deduction estimate, and
-runners-up.
+runners-up. **Confirm** a dispatch to log it to the delivery ledger (header →
+Ledger): a receipt trail per donor for tax-deduction records, plus per-night
+serving limits — a served block leaves the candidate pool, so no hotspot is
+piled on twice. Confirmed deliveries persist in the browser (localStorage);
+"Reset tonight" clears them. The header also toggles light/dark mode (light is
+the default; dark mode uses amber instead of orange).
 
 ## The matching model
 
@@ -53,5 +58,8 @@ cost   = (drive + handling minutes) × $17.75/hr + road miles × $0.76/mi
   with a monthly pantry is not a served block.
 - Prepared food (hotels, venues) only matches collectors that handle prepared
   meals: 2 agencies plus hot-meal pantry programs.
+- Serving limit: max 2 deliveries per hotspot per night, and a block whose
+  need is met leaves the pool; partially served blocks count remaining need
+  only. Past-week ledger history is seeded in `build_demo_data.py`.
 - Surplus **reports are simulated** (seeded in `build_demo_data.py`); hotspot
   need, businesses, and agencies are real data.
