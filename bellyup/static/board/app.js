@@ -20,7 +20,14 @@ const api = (path, opts) => fetch(path, opts).then(async r => {
 
 async function loadBoard() {
   const b = await api("/api/board");
+  /* The board is replaced wholesale on every refresh. __match is the cached
+     dispatch preview, keyed to the report rather than to the request, so carry
+     it over -- dropping it left the panel on "Finding a collector..." after a
+     withdrawal until the restaurant was clicked again. */
+  const prevMatch = {};
+  for (const s of (SUPPLIERS || [])) if (s.__match) prevMatch[s.id] = s.__match;
   HOTSPOTS = b.hotspots; SUPPLIERS = b.suppliers;
+  for (const s of SUPPLIERS) if (prevMatch[s.id]) s.__match = prevMatch[s.id];
   AGENCIES = b.agencies; PANTRIES = b.pantries; C = b.constants;
   HISTORY = b.history || []; tonight = b.tonight || [];
   CLAIMS = b.claims || {};
@@ -1184,6 +1191,43 @@ function renderBusiness() {
   renderStats();
 }
 
+/* The one collector a report is addressed to, as a full record with coords.
+
+   `matchedToId` is assigned server-side across ALL reports at once -- least-
+   loaded collector first, best net value only as the tie-break (see
+   dispatch.assign_targets). So it is deliberately NOT the top row of this
+   report's own ranking: a collector already holding four reports loses to a
+   quieter one scoring slightly worse. The panel read `matchedTo` from the
+   server while the map drew this report's own best pair, so the route pointed
+   at Feeding San Diego while the request went to Jacobs & Cushman. Everything
+   donor-facing resolves through here instead. */
+function matchedCollector(s) {
+  if (!s) return null;
+  const all = [...AGENCIES, ...PANTRIES];
+  const byName = n => all.find(x => x.name === n) || null;
+  /* whoever actually holds it outranks whoever it was offered to */
+  if (s.acceptedBy) return byName(s.acceptedBy);
+  if (s.matchedToId) {
+    const hit = all.find(x => x.id === s.matchedToId);
+    if (hit) return hit;
+  }
+  return s.matchedTo ? byName(s.matchedTo) : null;
+}
+
+/* One blue leg: the collector coming to this restaurant, and nothing else.
+   Keyed off matchedCollector so it cannot drift from the panel beside it. */
+function drawMatchRoute(s) {
+  const c = matchedCollector(s);
+  if (!c) return;
+  fxLayer.addLayer(L.polyline([[c.lat, c.lon], [s.lat, s.lon]], {
+    color: themeColor("--c-agency"), bellyRole: "--c-agency",
+    weight: 3, opacity: .9, className: "route-leg1", interactive: false }));
+  fxLayer.addLayer(L.circleMarker([s.lat, s.lon], {
+    radius: 8, color: themeColor("--c-supplier"), weight: 3,
+    fillOpacity: .9, interactive: false }));
+  return c;
+}
+
 /* The request lives beside the restaurant it belongs to: who it was matched
    to, whether it has been asked for yet, and who has said no. */
 function bizMatch(s) {
@@ -1260,19 +1304,28 @@ async function sendRequest(id) {
     await api(`/api/board/request/${id}?allow_fallback=${fb}`, { method: "POST" });
   }
   catch (e) { alert(e.message); }
-  await refreshAll();
-  selectedId = id;
-  renderBusiness();
-  renderRequestPanel(SUPPLIERS.find(x => x.id === id));
+  await afterRequestChange(id);
 }
 
 async function cancelRequest(id) {
   try { await api(`/api/board/request/${id}/cancel`, { method: "POST" }); }
   catch (e) { alert(e.message); }
+  await afterRequestChange(id);
+}
+
+/* Shared tail for both. The stale blue leg was the visible half of the bug:
+   refreshAll() rebuilds baseLayer but never touches fxLayer, so the line drawn
+   before the request survived it -- and if the target had moved on (a decline
+   reopening the offer, someone else accepting) it kept pointing at the old
+   collector while the panel named the new one. Redraw from the fresh record. */
+async function afterRequestChange(id) {
   await refreshAll();
   selectedId = id;
+  const s = SUPPLIERS.find(x => x.id === id);
   renderBusiness();
-  renderRequestPanel(SUPPLIERS.find(x => x.id === id));
+  renderRequestPanel(s);
+  fxLayer.clearLayers();
+  drawMatchRoute(s);
 }
 
 /* RIGHT, business view: where this request stands.
@@ -1416,11 +1469,26 @@ async function pickRestaurant(id) {
   const started = performance.now();
   try {
     const r = await dispatchFor(s);
-    const b = r.pairs[0];
+    /* The pair for the collector this report is ADDRESSED to, not the pair
+       that scores highest. Requesting a pickup sends it to the server's
+       target, so quoting anyone else here would name a collector the button
+       is not going to ask. */
+    const want = matchedCollector(s);
+    const b = (want && r.pairs.find(p => p.collector.id === want.id)) || r.pairs[0];
+    /* Target present but with no viable pair left -- the board caches its
+       assignment and the clock has moved on since. Measured on tonight's data
+       that is 1 report in 26. Keep the collector honest and measure the leg
+       ourselves rather than quoting a different collector's numbers under its
+       name. */
+    const own = !want || !b || want.id === b.collector.id;
     s.__match = b ? {
-      ok: true, collector: b.collector.name, pickupAt: b.pickupAt,
-      miles: b.leg1, fmv: r.fmv, deferred: b.deferred,
-      lat: b.collector.lat, lon: b.collector.lon,
+      ok: true,
+      collector: (want || b.collector).name,
+      lat: (want || b.collector).lat, lon: (want || b.collector).lon,
+      miles: own ? b.leg1 : roadMi(want, s),
+      pickupAt: own ? b.pickupAt : null,
+      deferred: own ? b.deferred : null,
+      fmv: r.fmv,
     } : { ok: false, reason: r.headline || "No agency can collect this yet." };
     s.__evaluated = r.evaluated || 0;
   } catch (e) { s.__match = { ok: false, reason: e.message }; }
@@ -1434,18 +1502,9 @@ async function pickRestaurant(id) {
   renderBusiness();
   renderRequestPanel(s);
 
-  /* one line: the collector coming to this restaurant, and nothing else */
-  const m = s.__match;
-  if (m.ok) {
-    fxLayer.addLayer(L.polyline([[m.lat, m.lon], [s.lat, s.lon]], {
-      color: themeColor("--c-agency"), bellyRole: "--c-agency",
-      weight: 3, opacity: .9, className: "route-leg1", interactive: false }));
-    fxLayer.addLayer(L.circleMarker([s.lat, s.lon], {
-      radius: 8, color: themeColor("--c-supplier"), weight: 3,
-      fillOpacity: .9, interactive: false }));
-    map.flyToBounds(L.latLngBounds([[m.lat, m.lon], [s.lat, s.lon]]).pad(0.3),
-                    { duration: 0.7 });
-  }
+  const c = s.__match.ok ? drawMatchRoute(s) : null;
+  if (c) map.flyToBounds(L.latLngBounds([[c.lat, c.lon], [s.lat, s.lon]]).pad(0.3),
+                         { duration: 0.7 });
   /* NOT showEmpty() here -- renderRequestPanel has just filled this panel,
      and calling it re-hid the content and restored the "pick a restaurant"
      prompt over the top of it. */
