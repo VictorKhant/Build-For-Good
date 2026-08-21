@@ -237,7 +237,7 @@ button { font: inherit; color: inherit; cursor: pointer; }
 .lg-cluster { border-width: 2.6px; }
 .lg-emerging { border-color: var(--c-emerging); background: color-mix(in srgb, var(--c-emerging) 30%, transparent); }
 .lg-cooling { border-color: var(--c-cooling); background: color-mix(in srgb, var(--c-cooling) 30%, transparent); }
-.lg-new { border-style: dashed; border-width: 2.2px; border-color: var(--muted); background: transparent; }
+.lg-new { border-style: dashed; border-width: 2.2px; border-color: var(--c-cooling); background: transparent; }
 .lg-supplier {
   width: 11px; height: 11px; border-radius: 50%;
   background: var(--c-supplier);

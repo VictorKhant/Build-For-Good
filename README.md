@@ -23,26 +23,16 @@ figure for the deduction.
 
 ```bash
 python3 -m venv .venv
-./.venv/bin/pip install fastapi uvicorn pandas numpy shapely requests
+./.venv/bin/pip install fastapi uvicorn numpy scipy requests
 
 cd bellyup
 ../.venv/bin/python -m uvicorn app:app --port 8000
 ```
 
-Then open **http://localhost:8000**.
-
-| Route | What it is |
-|---|---|
-| `/` | **Dispatch board** — the main demo |
-| `/roles` | Earlier three-role view (restaurant / agency / find-food) |
-
-Console harnesses, no browser needed:
-
-```bash
-cd bellyup
-../.venv/bin/python run_demo.py   # rehearsed scenarios, both legs
-../.venv/bin/python verify.py     # what still needs a human to check
-```
+Then open **http://localhost:8000** — the dispatch board is the only view;
+the earlier three-role `/roles` prototype (`agencies.py`, `collection.py`,
+`needs.py` and the rest) has been removed as superseded, along with its
+`run_demo.py`/`verify.py` console harnesses.
 
 ---
 
@@ -432,31 +422,24 @@ offers an undo.
 
 ```
 bellyup/
-  app.py            FastAPI: board, roles, geocoding
+  app.py            FastAPI: the dispatch board's routes
   demo_data.py      loads the datasets into the shapes the UI expects
   dispatch.py       the reward−cost engine, freshness, ledger      ← core
   claims.py         request lifecycle: who was asked, who said no
   registry.py       persistence: registrations, reports, opt-outs
   geocode.py        address → coordinates (Census, then Nominatim)
+  spatial.py        Getis-Ord Gi* — is a block's need a real cluster
+  area_forecast.py  neighbourhood-level trend regression, p-value gated
   static/board/     the dispatch board UI
-
-  # the earlier role-scoped build, served at /roles
-  needs.py          block need + area forecast from the DSDP record
-  demand.py         apportioned demand budgets + delivery ledger
-  agencies.py       walk-in vs mobile intake demand
-  economics.py      cost model, CONFIG, tax deduction
-  collection.py     leg 1 — which agency collects
-  distribution.py   leg 2 — mobile pantry run to hotspots
-  pipeline.py       chains both legs
-  pantry_finder.py  public "where can I get food" view
-  run_demo.py       console harness
-  verify.py         verification worksheet, ranked by demo impact
 
 dataset/            all data, curated + app-written
 ```
 
-`matching.py` is superseded by `collection.py` + `distribution.py` and is no
-longer imported.
+The earlier role-scoped build (`agencies.py`, `collection.py`, `distribution.py`,
+`needs.py`, `pipeline.py`, `pantry_finder.py`, `economics.py`, `demand.py`,
+`schedule.py`, `rules.py`, `matching.py`, `seed.py`, `run_demo.py`, `verify.py`,
+served at `/roles`) has been removed as superseded by the dispatch board above,
+which reads the same real `dataset/*.csv` files.
 
 ---
 

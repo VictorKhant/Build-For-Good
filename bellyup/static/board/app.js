@@ -205,15 +205,17 @@ function hotspotTip(h) {
      "gained"  not a cluster today -- a genuinely new marker, dashed, in the
                emerging colour (nothing was drawn there before)
      "lost"    a cluster today -- drawn as a second, larger dashed ring
-               AROUND the existing current marker at that spot, in a muted
-               colour, so the current marker underneath stays untouched and
-               visible; this one says "fading out", not "gone already" */
+               AROUND the existing current marker at that spot, in the same
+               cooling colour the current view already uses for a declining
+               cluster (dashed + larger + no fill keeps it distinct from
+               that solid marker underneath, which stays untouched and
+               visible); this one says "fading out", not "gone already" */
 let FORECAST_MONTHS = 6;
 let FORECAST_CHANGES = null;
 const changeMarkers = {};
 
 function changeStyle(c) {
-  const col = c.change === "gained" ? themeColor("--c-emerging") : themeColor("--muted");
+  const col = c.change === "gained" ? themeColor("--c-emerging") : themeColor("--c-cooling");
   return {
     radius: (3 + Math.sqrt(c.projectedNeed) * 2.1) + (c.change === "lost" ? 6 : 0),
     color: col,
@@ -235,7 +237,7 @@ function changeTip(c) {
       `<b style="color:${themeColor("--c-emerging")}">predicted NEW cluster</b> in ~${FORECAST_MONTHS} months (z=${c.giZ})` +
       `<br>${trend} &middot; not significant today</div>`
     : `<b>${c.location}</b> &middot; ${c.area}<div class="tip-k">` +
-      `<b style="color:${themeColor("--muted")}">predicted to fall out</b> of significance in ~${FORECAST_MONTHS} months` +
+      `<b style="color:${themeColor("--c-cooling")}">predicted to fall out</b> of significance in ~${FORECAST_MONTHS} months` +
       `<br>${trend} &middot; a real cluster today, fading</div>`;
 }
 
