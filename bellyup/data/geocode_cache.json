@@ -127,6 +127,12 @@
     "lon": -116.960924,
     "matched": "16881 OLD SURVEY RD, ESCONDIDO, CA, 92025"
   },
+  "16th & market, san diego": {
+    "lat": 32.71153,
+    "lon": -117.14946,
+    "matched": "16TH ST & MARKET ST, SAN DIEGO, CA, 92101",
+    "source": "census"
+  },
   "16th and market, san diego": {
     "lat": 32.71153,
     "lon": -117.14946,
