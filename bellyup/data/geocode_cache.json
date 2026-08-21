@@ -4,6 +4,12 @@
     "lon": -116.976977,
     "matched": "10122 BUENA VISTA AVE, SANTEE, CA, 92071"
   },
+  "1050 fifth ave, san diego, ca 92101": {
+    "lat": 32.716229,
+    "lon": -117.160229,
+    "matched": "1050 5TH AVE, SAN DIEGO, CA, 92101",
+    "source": "census"
+  },
   "1120 nestor way, nestor, ca 92154": {
     "lat": 32.57584,
     "lon": -117.085536,
@@ -148,6 +154,12 @@
     "matched": "2001 NEWTON AVE, SAN DIEGO, CA, 92113"
   },
   "2305 india st, san diego, ca": {
+    "lat": 32.728434,
+    "lon": -117.170255,
+    "matched": "2305 INDIA ST, SAN DIEGO, CA, 92101",
+    "source": "census"
+  },
+  "2305 india st, san diego, ca 92101": {
     "lat": 32.728434,
     "lon": -117.170255,
     "matched": "2305 INDIA ST, SAN DIEGO, CA, 92101",
@@ -443,5 +455,6 @@
     "matched": "Nolita Hall, India Street, Little Italy, Banker's Hill, San Diego, San Diego County, California, 92101, United States",
     "source": "nominatim"
   },
+  "zzzqqq nowhere at all, san diego, ca": null,
   "zzzz nowhere at all, san diego, ca": null
 }

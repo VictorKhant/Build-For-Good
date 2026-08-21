@@ -24,11 +24,14 @@ from pydantic import BaseModel, Field
 import agencies as ag_mod
 import collection
 import demand as demand_mod
+import demo_data
+import dispatch
 import distribution
 import geocode as geo
 import needs as needs_mod
 import pantry_finder
 import pipeline
+import registry
 import scenarios
 import schedule as sched
 from economics import CONFIG, CONFIG_SOURCES, tax_deduction
@@ -52,8 +55,18 @@ def boot():
 
 
 def now() -> datetime:
-    """Demo clock. Anchored so the rehearsed scenarios are reproducible."""
+    """Clock for the role-scoped views and their rehearsed scenarios."""
     return _state.get("clock", scenarios.DEMO_NOW)
+
+
+def board_now() -> datetime:
+    """Clock for the dispatch board.
+
+    Separate from now() on purpose: the board is an evening scenario anchored
+    to the 3rd Thursday, which is what mobile-pantry availability is resolved
+    against. The role views are anchored to a Wednesday afternoon.
+    """
+    return _board.get("clock", demo_data.DEMO_NOW)
 
 
 # --------------------------------------------------------------------------
@@ -90,9 +103,260 @@ class ConfigBody(BaseModel):
     updates: dict
 
 
+class SurplusReport(BaseModel):
+    """A restaurant registering and reporting tonight's surplus."""
+    name: str = Field(min_length=2)
+    address: str = ""
+    lat: float | None = None
+    lon: float | None = None
+    facility_type: str = "restaurant"
+    surplus: str = "prepared"          # 'prepared' | 'packaged/produce'
+    lbs: float = Field(gt=0)
+    items: str = ""
+    pickup_from: str | None = None     # 'HH:MM'
+    pickup_to: str | None = None
+    expires_at: str | None = None      # 'HH:MM'
+    expires_in_hours: float | None = None
+    freshness: str = "fresh"
+
+
+class ReportUpdate(BaseModel):
+    """Tonight's numbers for a supplier that is already on the platform.
+
+    Every field is optional: a restaurant updating only the weight should not
+    have to restate its pickup window. `has_surplus: false` clears the report
+    entirely -- some nights a kitchen has nothing, and saying so is a real
+    answer, not a missing one.
+    """
+    has_surplus: bool = True
+    surplus: str | None = None
+    lbs: float | None = None
+    items: str | None = None
+    pickup_from: str | None = None
+    pickup_to: str | None = None
+    expires_at: str | None = None
+    freshness: str | None = None
+
+
 # --------------------------------------------------------------------------
 # shared / map
 # --------------------------------------------------------------------------
+
+# --------------------------------------------------------------------------
+# DISPATCH BOARD -- the merged view: real data, live registration
+# --------------------------------------------------------------------------
+
+_board: dict = {}
+
+
+def board():
+    """Real datasets, loaded once, plus suppliers registered this session."""
+    if not _board:
+        _board["hotspots"] = demo_data.load_hotspots()
+        _board["suppliers"] = demo_data.load_suppliers()
+        _board["agencies"] = demo_data.load_agencies()
+        _board["pantries"] = demo_data.load_pantries()
+    return _board
+
+
+def _find_supplier(sid: str) -> dict:
+    s = next((x for x in board()["suppliers"] if x["id"] == sid), None)
+    if s is None:
+        raise HTTPException(404, "no such supplier")
+    if not s.get("report"):
+        raise HTTPException(400, f"{s['name']} has not reported surplus tonight")
+    return s
+
+
+@app.get("/api/board")
+def get_board():
+    """Everything the front end needs to draw the map and the feed."""
+    b = board()
+    return {
+        "hotspots": b["hotspots"],
+        "suppliers": b["suppliers"],
+        "agencies": b["agencies"],
+        "pantries": b["pantries"],
+        "constants": demo_data.CONSTANTS,
+        "registered": registry.count(),
+        "optedOut": registry.optout_count(),
+        "now": board_now().strftime("%H:%M"),
+        "date": board_now().strftime("%A, %b %-d %Y"),
+        "served": dispatch.LEDGER.snapshot(),
+    }
+
+
+@app.post("/api/board/register")
+def register_supplier(body: SurplusReport):
+    """A restaurant signs up and reports surplus in one step.
+
+    Geocodes the address if no coordinates were given, so an owner only has to
+    type where they are. The report joins tonight's feed immediately.
+    """
+    b = board()
+
+    lat, lon = body.lat, body.lon
+    if lat is None or lon is None:
+        if not body.address:
+            raise HTTPException(400, "give an address, or a lat/lon")
+        hit = geo.lookup(body.address)
+        if hit is None:
+            raise HTTPException(404, f"Could not find '{body.address}'. "
+                                     f"Try adding the city and ZIP.")
+        lat, lon = hit["lat"], hit["lon"]
+
+    reported = body.pickup_from or board_now().strftime("%H:%M")
+    sid = registry.next_id()
+
+    supplier = {
+        "id": sid, "name": body.name, "type": body.facility_type,
+        "address": body.address or f"{lat:.4f}, {lon:.4f}",
+        "lat": lat, "lon": lon,
+        "surplus": body.surplus,
+        "sb1383Tier": None,
+        "registered": True,
+        "report": {
+            "lbs": body.lbs,
+            "items": body.items or "surplus reported by the kitchen",
+            "time": reported,
+            "pickupFrom": reported,
+            "pickupTo": body.pickup_to,
+            "expiresAt": body.expires_at,
+            "expiresInHours": body.expires_in_hours,
+            "freshness": body.freshness,
+        },
+    }
+    # Permanent: appended to dataset/businesses.csv alongside the curated 31,
+    # with tonight's numbers in surplus_reports.csv.
+    registry.add_business(supplier)
+    registry.save_report(supplier, has_surplus=True)
+    _board.clear()
+    return {"supplier": supplier, "persisted": True,
+            "registered_total": registry.count()}
+
+
+@app.post("/api/board/report/{supplier_id}")
+def update_report(supplier_id: str, body: ReportUpdate):
+    """Update tonight's surplus for a supplier already on the platform.
+
+    Surplus is different every night. Without this the feed is a fixture: the
+    same fourteen quantities forever, which is exactly what voluntary daily
+    reporting is meant to replace.
+    """
+    b = board()
+    s = next((x for x in b["suppliers"] if x["id"] == supplier_id), None)
+    if s is None:
+        raise HTTPException(404, "no such supplier")
+
+    if not body.has_surplus:
+        s["report"] = None
+        registry.save_report(s, has_surplus=False)
+        return {"supplier": s, "cleared": True}
+
+    rep = dict(s.get("report") or {})
+    if not rep:
+        # first report of the evening for a partner that was quiet
+        rep = {"time": board_now().strftime("%H:%M"),
+               "items": "surplus reported by the kitchen"}
+        rep["pickupFrom"] = rep["time"]
+
+    if body.lbs is not None:
+        if body.lbs <= 0:
+            raise HTTPException(422, "lbs must be greater than 0")
+        rep["lbs"] = body.lbs
+    if body.items is not None:
+        rep["items"] = body.items or rep.get("items", "")
+    if body.pickup_from:
+        rep["pickupFrom"] = body.pickup_from
+        rep["time"] = body.pickup_from
+    if body.pickup_to:
+        rep["pickupTo"] = body.pickup_to
+    if body.expires_at:
+        rep["expiresAt"] = body.expires_at
+        rep.pop("expiresInHours", None)      # an explicit time wins
+    if body.freshness:
+        rep["freshness"] = body.freshness
+    if body.surplus:
+        s["surplus"] = body.surplus
+
+    rep["updated"] = True
+    s["report"] = rep
+    # Every supplier's report persists now, curated ones included -- an updated
+    # weight that vanished on restart was its own small bug.
+    registry.save_report(s, has_surplus=True)
+    return {"supplier": s, "cleared": False, "persisted": True}
+
+
+@app.post("/api/board/dispatch/{supplier_id}")
+def dispatch_supplier(supplier_id: str, commit: bool = False):
+    """Rank every (collector, hotspot) pair for one report."""
+    b = board()
+    s = _find_supplier(supplier_id)
+    result = dispatch.compute(s, b["agencies"], b["pantries"], b["hotspots"],
+                              board_now(), commit=commit)
+    out = dispatch.serialisable(result)
+    out["supplier"] = s
+    out["served"] = dispatch.LEDGER.snapshot()
+    return out
+
+
+@app.delete("/api/board/supplier/{supplier_id}")
+def remove_supplier(supplier_id: str):
+    """Take a restaurant off the platform.
+
+    Two different things depending on where it came from:
+
+      self-registered -> its row is deleted outright
+      curated         -> recorded as an opt-out and filtered out at load
+
+    The 31 rows in businesses.csv are externally sourced, so they are never
+    rewritten. A business leaving is an opt-out, not a deletion from the
+    record, and `POST /api/board/restore` puts it back.
+    """
+    b = board()
+    s = next((x for x in b["suppliers"] if x["id"] == supplier_id), None)
+    if s is None:
+        raise HTTPException(404, "no such supplier")
+
+    if s.get("registered"):
+        registry.remove_business(s["name"])
+        registry.drop_report(s["name"])
+        how = "deleted"
+    else:
+        registry.opt_out(s["name"], supplier_id)
+        how = "opted out"
+
+    _board.clear()
+    return {"removed": supplier_id, "name": s["name"], "how": how,
+            "registered_total": registry.count(),
+            "opted_out_total": registry.optout_count()}
+
+
+# the old path, kept so nothing that already calls it breaks
+@app.delete("/api/board/registered/{supplier_id}")
+def remove_registered(supplier_id: str):
+    return remove_supplier(supplier_id)
+
+
+@app.post("/api/board/restore")
+def restore_suppliers(name: str | None = None):
+    """Put opted-out businesses back on the platform."""
+    n = registry.restore(name)
+    _board.clear()
+    return {"restored": n, "opted_out_total": registry.optout_count()}
+
+
+@app.post("/api/board/reset")
+def reset_board():
+    """Clear tonight's ledger and reload.
+
+    Registered restaurants survive this -- they are on disk, and they are
+    partners now, not demo state.
+    """
+    dispatch.LEDGER.reset()
+    _board.clear()
+    return {"reset": True, "registered_kept": registry.count()}
+
 
 @app.get("/api/config")
 def get_config():
@@ -338,6 +602,8 @@ def pantries(lat: float | None = None, lon: float | None = None,
 
 @app.post("/api/reset")
 def reset():
+    dispatch.LEDGER.reset()
+    _board.clear()
     demand_mod.LEDGER.reset()
     sched.SCHEDULE.reset()
     sched.LIMITS.reset()
@@ -367,4 +633,11 @@ app.mount("/static", StaticFiles(directory=HERE / "static"), name="static")
 
 @app.get("/")
 def index():
+    """The merged dispatch board is the front door now."""
+    return FileResponse(HERE / "static" / "board" / "index.html")
+
+
+@app.get("/roles")
+def roles_view():
+    """The earlier three-role view, kept for the agency and pantry-finder tools."""
     return FileResponse(HERE / "static" / "index.html")
