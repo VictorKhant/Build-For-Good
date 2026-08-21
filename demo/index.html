@@ -49,6 +49,8 @@
       <div class="lg-row"><span class="lg-supplier"></span> Supplier reporting surplus</div>
       <div class="lg-row"><span class="lg-supplier lg-quiet"></span> Supplier, quiet tonight</div>
       <div class="lg-row"><span class="lg-agency"></span> Agency HQ (collects &amp; distributes)</div>
+      <div class="lg-row"><span class="lg-pantry"></span> Mobile pantry &middot; unit available tonight</div>
+      <div class="lg-row"><span class="lg-pantry lg-pantry-idle"></span> Mobile pantry &middot; no unit tonight</div>
     </div>
 
     <div class="calc-overlay" id="calcOverlay">
@@ -63,7 +65,8 @@
     <div class="result-empty" id="resultEmpty">
       <div class="re-icon">&#9678;</div>
       <p>Select a surplus report to compute the best
-        <strong>agency&nbsp;&rarr;&nbsp;hotspot</strong> dispatch.</p>
+        <strong>collector&nbsp;&rarr;&nbsp;hotspot</strong> dispatch &mdash;
+        an agency truck or a mobile pantry unit.</p>
       <p class="re-model">reward(meals&nbsp;served, access&nbsp;gap) &minus; cost(miles, minutes)</p>
     </div>
     <div class="result-body" id="resultBody" hidden></div>
