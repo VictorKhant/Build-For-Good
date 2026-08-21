@@ -45,6 +45,77 @@ def road_distances_one_to_many_miles(
     return distances
 
 
+def road_metrics_one_to_many(
+    source: tuple[float, float], destinations: list[tuple[float, float]], chunk_size: int = 99
+) -> list[dict]:
+    """Driving miles/minutes from one source; unavailable routes are explicit."""
+    metrics = []
+    for start in range(0, len(destinations), chunk_size):
+        chunk = destinations[start : start + chunk_size]
+        points = [source, *chunk]
+        destination_indexes = ";".join(str(i) for i in range(1, len(points)))
+        try:
+            payload = _get_json(
+                f"/table/v1/driving/{_coordinate_string(points)}",
+                {
+                    "sources": "0",
+                    "destinations": destination_indexes,
+                    "annotations": "distance,duration",
+                },
+            )
+            for distance, duration in zip(payload["distances"][0], payload["durations"][0]):
+                available = distance is not None and duration is not None
+                metrics.append(
+                    {
+                        "available": available,
+                        "miles": distance / METERS_PER_MILE if available else None,
+                        "minutes": duration / 60 if available else None,
+                        "error": "" if available else "no_route",
+                    }
+                )
+        except Exception as exc:
+            metrics.extend(
+                {"available": False, "miles": None, "minutes": None, "error": str(exc)}
+                for _ in chunk
+            )
+    return metrics
+
+
+def road_metrics_many_to_one(
+    sources: list[tuple[float, float]], destination: tuple[float, float]
+) -> list[dict]:
+    """Driving miles/minutes from many sources to one destination."""
+    points = [*sources, destination]
+    source_indexes = ";".join(str(i) for i in range(len(sources)))
+    try:
+        payload = _get_json(
+            f"/table/v1/driving/{_coordinate_string(points)}",
+            {
+                "sources": source_indexes,
+                "destinations": str(len(sources)),
+                "annotations": "distance,duration",
+            },
+        )
+        result = []
+        for distance_row, duration_row in zip(payload["distances"], payload["durations"]):
+            distance, duration = distance_row[0], duration_row[0]
+            available = distance is not None and duration is not None
+            result.append(
+                {
+                    "available": available,
+                    "miles": distance / METERS_PER_MILE if available else None,
+                    "minutes": duration / 60 if available else None,
+                    "error": "" if available else "no_route",
+                }
+            )
+        return result
+    except Exception as exc:
+        return [
+            {"available": False, "miles": None, "minutes": None, "error": str(exc)}
+            for _ in sources
+        ]
+
+
 def road_distances_many_to_one_miles(
     sources: list[tuple[float, float]], destination: tuple[float, float]
 ) -> list[float]:
