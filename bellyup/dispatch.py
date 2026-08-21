@@ -174,6 +174,49 @@ class Ledger:
         self.deliveries.append(rec)
         return rec
 
+    def confirm_run(self, plan: dict, suppliers: list[dict], cfg: dict,
+                    when) -> list[dict]:
+        """Book a combined run: one receipt per donor, so each keeps its own
+        deduction record, with the served meals split by the share of the load
+        each one contributed.
+
+        Blocks are credited on the first stop each donor's food reaches. That
+        is an attribution choice, not a measurement -- a combined run mixes
+        pallets, and no one pallet belongs to one block.
+        """
+        # Only what actually went on the vehicle. A donor whose pallet was
+        # left behind for capacity has not donated anything yet, and must not
+        # be handed a receipt for it.
+        taken = {p["id"]: p["lbs"] for p in plan["pickups"]}
+        collected = [s for s in suppliers if s["id"] in taken]
+        total_lbs = sum(taken.values()) or 1.0
+        served = plan["servedMeals"]
+        stop = plan["stops"][0] if plan["stops"] else None
+        out = []
+        for s in collected:
+            share = taken[s["id"]] / total_lbs
+            n = len(self.deliveries) + 1
+            rec = {
+                "receipt": f"BU-{cfg['DEMO_DATE'].replace('-', '')}-T{n:02d}",
+                "date": cfg["DEMO_DATE"], "time": when.strftime("%H:%M"),
+                "supplierId": s["id"], "supplier": s["name"],
+                "lbs": s["report"]["lbs"],
+                "collectedLbs": round(taken[s["id"]]),
+                "servedMeals": round(served * share),
+                "surplusMeals": round(plan["leftoverMeals"] * share),
+                "collector": plan["collector"]["name"],
+                "kind": plan["collector"].get("kind", "agency"),
+                "hotspotId": stop["id"] if stop else None,
+                "hotspot": stop["location"] if stop else plan["collector"]["name"],
+                "fmv": round(taken[s["id"]] * cfg["FMV_PER_LB"], 2),
+                "net": round(plan["net"] * share, 2),
+                "deferred": False, "deliversAt": None,
+                "combined": True, "runSize": len(collected),
+            }
+            self.deliveries.append(rec)
+            out.append(rec)
+        return out
+
     def snapshot(self) -> dict[str, float]:
         out: dict[str, float] = {}
         for d in self.deliveries:
@@ -545,18 +588,32 @@ def combine_run(collector: dict, suppliers: list[dict], hotspots: list[dict],
     cap = collector.get("capacityLbs", c["AGENCY_CAPACITY_LBS"])
 
     # --- which pickups fit, in what order -------------------------------
+    # Fill the vehicle. Smallest first, so a van takes as many donors as it
+    # can rather than being blocked by one pallet it cannot lift; the last one
+    # aboard may be a PARTIAL take, which is what a real collection does and
+    # what the single-pickup path already allowed. What is left over is named,
+    # not silently dropped.
     loaded, left_behind, running = [], [], 0.0
-    for s in sorted(suppliers, key=lambda x: -x["report"]["lbs"]):
+    partial = None
+    for s in sorted(suppliers, key=lambda x: x["report"]["lbs"]):
         lbs = float(s["report"]["lbs"])
-        if running + lbs <= cap:
-            loaded.append(s)
-            running += lbs
-        else:
-            left_behind.append(s)
+        room = cap - running
+        if room <= 0:
+            left_behind.append({"supplier": s, "lbs": lbs})
+            continue
+        take = min(lbs, room)
+        if take < 1:
+            left_behind.append({"supplier": s, "lbs": lbs})
+            continue
+        loaded.append({**s, "_take": take})
+        running += take
+        if take < lbs:
+            partial = {"name": s["name"], "took": round(take, 1),
+                       "of": lbs, "leaves": round(lbs - take, 1)}
     if not loaded:
         return {"feasible": False,
-                "reason": f"every accepted pickup is larger than the "
-                          f"{cap:.0f} lb capacity of this vehicle"}
+                "reason": f"nothing selected fits the {cap:.0f} lb capacity "
+                          f"of this vehicle"}
 
     def leg(a, b):
         return road_mi(a, b)
@@ -653,33 +710,56 @@ def combine_run(collector: dict, suppliers: list[dict], hotspots: list[dict],
     rc = run_cost(kind, miles, minutes, c)
 
     served_total = sum(x["meals"] for x in stops)
+    # (viability is checked below, once the reward is known)
     reward = sum(x["meals"] * c["MEAL_VALUE"]
                  * (1 + c["ACCESS_BOOST_MAX"] * (7 - min(x["accessDays"], 7)) / 7)
                  for x in stops)
     leftover = max(0.0, meals - served_total)
     reward += leftover * c["MEAL_VALUE"] * c["DROPOFF_CREDIT"]
 
-    # what each pickup would have cost run on its own
+    # What the same pickups would have cost as separate runs: each is its own
+    # base -> donor -> block -> base. Only meaningful once there is more than
+    # one, so a single-pickup "combination" reports no saving rather than a
+    # rounding artefact.
     solo = 0.0
+    first_stop = {"lat": stops[0]["lat"], "lon": stops[0]["lon"]}
     for s in pickups:
-        one = leg(collector, s) * 2 + leg(s, {"lat": stops[0]["lat"], "lon": stops[0]["lon"]})
+        one = (leg(collector, s) + leg(s, first_stop)
+               + road_mi(first_stop, collector))
         solo += run_cost(kind, one,
                          one / c["AVG_SPEED_MPH"] * 60 + c["HANDLING_MIN"], c)["total"]
+    if len(pickups) < 2:
+        solo = rc["total"]
+
+    if reward - rc["total"] <= 0:
+        return {"feasible": False,
+                "reason": f"the run costs ${rc['total']:.2f} to move "
+                          f"${reward:.2f} of food — not worth making"}
+
+    # the legs out to the first pickup and home from the last drop carry no
+    # food; worth naming, because a depot far from downtown spends most of its
+    # miles on them
+    deadhead = (leg(collector, pickups[0])
+                + road_mi(stops[-1], collector))
 
     return {
         "feasible": True,
+        "deadheadMi": round(deadhead, 2),
+        "workingMi": round(miles - deadhead, 2),
         "collector": {k: collector[k] for k in
                       ("id", "name", "kind", "lat", "lon", "capacityLbs")
                       if k in collector},
         "pickups": [{"id": s["id"], "name": s["name"], "address": s.get("address", ""),
                      "lat": s["lat"], "lon": s["lon"],
-                     "lbs": s["report"]["lbs"],
+                     "lbs": round(s.get("_take", s["report"]["lbs"]), 1),
+                     "offeredLbs": s["report"]["lbs"],
                      "window": f"{s['report'].get('pickupFrom','')}"
                                f"–{s['report'].get('pickupTo','')}",
                      "items": s["report"].get("items", "")} for s in pickups],
         "stops": stops,
-        "leftBehind": [{"id": s["id"], "name": s["name"],
-                        "lbs": s["report"]["lbs"]} for s in left_behind],
+        "leftBehind": [{"id": x["supplier"]["id"], "name": x["supplier"]["name"],
+                        "lbs": x["lbs"]} for x in left_behind],
+        "partial": partial,
         "missedWindows": missed_windows,
         "loadedLbs": round(running, 1),
         "capacityLbs": cap,

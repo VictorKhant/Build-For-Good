@@ -1038,3 +1038,10 @@ body.ledger-open { overflow: hidden; }
 /* The hidden attribute must beat any display rule a class sets, or a panel
    with display:flex stays on screen while JS believes it is hidden. */
 [hidden] { display: none !important; }
+
+/* how much of a run is spent empty */
+.mi-split { margin-top: 9px; }
+.mi-bar { display: flex; height: 6px; border-radius: 99px; overflow: hidden; background: var(--surface-3); }
+.mi-work { background: var(--c-route); }
+.mi-dead { background: color-mix(in srgb, var(--bad) 55%, transparent); }
+.mk-seq.drop { background: var(--c-route); }

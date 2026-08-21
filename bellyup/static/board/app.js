@@ -1042,6 +1042,7 @@ let role = "agency";
 let myAgency = null;
 let offers = { offers: [], accepted: [] };
 let planned = null;
+let basket = [];       // chosen but NOT yet accepted -- previewing is free
 
 function setRole(next) {
   role = next;
@@ -1102,7 +1103,9 @@ async function loadOffers() {
   ];
   if (!sel.options.length) {
     sel.innerHTML = collecting.map(c => `<option value="${c.id}">${c.name}</option>`).join("");
-    sel.addEventListener("change", () => { myAgency = sel.value; planned = null; loadOffers(); });
+    sel.addEventListener("change", () => {
+      myAgency = sel.value; planned = null; basket = []; loadOffers();
+    });
   }
   myAgency = myAgency || sel.value || (collecting[0] || {}).id;
   sel.value = myAgency;
@@ -1110,13 +1113,17 @@ async function loadOffers() {
   try { offers = await api(`/api/board/agency/${myAgency}/offers`); }
   catch (e) { $("feed").innerHTML = `<div class="empty">${e.message}</div>`; return; }
 
+  basket = basket.filter(id => offers.offers.some(o => o.supplier.id === id));
+
   $("agencyStats").innerHTML =
     `<b>${offers.agency.capacityLbs}</b> lb capacity &middot;
-     <b>${offers.accepted.length}</b> accepted (${offers.acceptedLbs} lb) &middot;
+     <b>${basket.length}</b> in this run &middot;
      <b>${offers.offers.filter(o => o.viable).length}</b> offers open`;
 
-  const row = (o, taken) => `
-    <div class="offer ${taken ? "taken" : (o.viable ? "" : "dead")}">
+  const row = o => {
+    const inRun = basket.includes(o.supplier.id);
+    return `
+    <div class="offer ${inRun ? "taken" : (o.viable ? "" : "dead")}">
       <div class="offer-top">
         <span>${typeIcon[o.supplier.type] || "🍽"}</span>
         <span class="offer-name">${o.supplier.name}</span>
@@ -1128,102 +1135,159 @@ async function loadOffers() {
         ${o.report.expiresAt ? `&middot; good until ${o.report.expiresAt}` : ""}
         ${o.viable
           ? `<br>${o.deferred ? `hold &amp; deliver ${o.deliversAt}` : `→ ${o.target || "drop-off"}`}
-             &middot; ${o.miles.toFixed(1)} mi`
+             &middot; ${o.miles.toFixed(1)} mi on its own`
           : `<br><span style="color:var(--bad)">${o.whyNot}</span>`}
       </div>
-      ${taken
-        ? `<button class="offer-act ghost" data-release="${o.supplier.id}">Release</button>`
-        : (o.viable ? `<button class="offer-act" data-accept="${o.supplier.id}">Accept</button>` : "")}
+      ${o.viable ? `<button class="offer-act ${inRun ? "ghost" : ""}"
+         data-toggle="${o.supplier.id}">${inRun ? "Remove from run" : "Add to run"}</button>` : ""}
     </div>`;
+  };
 
   $("feed").innerHTML =
-    (offers.accepted.length
-      ? `<div class="sec-head">On your run sheet (${offers.accepted.length})</div>`
-        + offers.accepted.map(o => row(o, true)).join("")
-        + `<button class="plan-btn" id="planBtn">Plan the combined run</button>`
-      : "")
+    `<div class="sec-head">Build a run (${basket.length} selected)</div>`
+    + `<div class="offer-sub" style="margin:0 2px 9px">
+         Adding is free — nothing is taken until you accept the run.
+       </div>`
+    + (planned ? renderPlan(planned) : (basket.length
+        ? `<div class="empty">Solving…</div>` : ""))
+    + (basket.length
+        ? `<button class="plan-btn" id="acceptBtn">Accept this run &amp; log receipts</button>`
+        : "")
     + `<div class="sec-head">Offered to you (${offers.offers.length})</div>`
-    + (offers.offers.map(o => row(o, false)).join("")
-       || `<div class="empty">Nothing waiting.</div>`)
-    + (planned ? renderPlan(planned) : "");
+    + (offers.offers.map(row).join("") || `<div class="empty">Nothing waiting.</div>`);
 
-  $("feed").querySelectorAll("[data-accept]").forEach(b =>
-    b.addEventListener("click", async () => {
-      try { await api(`/api/board/agency/${myAgency}/accept/${b.dataset.accept}`,
-                      { method: "POST" }); }
-      catch (e) { alert(e.message); }
-      planned = null; await refreshAll(); loadOffers();
+  $("feed").querySelectorAll("[data-toggle]").forEach(b =>
+    b.addEventListener("click", () => {
+      const id = b.dataset.toggle;
+      basket = basket.includes(id) ? basket.filter(x => x !== id) : [...basket, id];
+      previewRun();
     }));
-  $("feed").querySelectorAll("[data-release]").forEach(b =>
-    b.addEventListener("click", async () => {
-      await api(`/api/board/agency/${myAgency}/release/${b.dataset.release}`,
-                { method: "POST" });
-      planned = null; await refreshAll(); loadOffers();
-    }));
-  const pb = $("planBtn");
-  if (pb) pb.addEventListener("click", planRun);
+  const ab = $("acceptBtn");
+  if (ab) ab.addEventListener("click", acceptRun);
 
   $("feedFoot").innerHTML =
-    `<span class="dot dot-quiet"></span> Accepting takes a job off everyone
-     else's board.`;
+    `<span class="dot dot-quiet"></span> Accepting books the run and logs a
+     receipt for every donor.`;
   renderStats();
   buildLayers();
   drawAgencyMarkers();
-}
-
-async function planRun() {
-  const btn = $("planBtn");
-  if (btn) { btn.disabled = true; btn.textContent = "Solving the route…"; }
-  try { planned = await api(`/api/board/agency/${myAgency}/plan`, { method: "POST" }); }
-  catch (e) { alert(e.message); }
-  if (btn) { btn.disabled = false; btn.textContent = "Plan the combined run"; }
-  loadOffers();
   if (planned && planned.feasible) drawPlan(planned);
 }
 
+async function previewRun() {
+  if (!basket.length) { planned = null; clearFx(); return loadOffers(); }
+  try {
+    planned = await api(
+      `/api/board/agency/${myAgency}/preview?supplier_ids=${basket.join(",")}`,
+      { method: "POST" });
+  } catch (e) { planned = { feasible: false, reason: e.message }; }
+  loadOffers();
+}
+
+async function acceptRun() {
+  const btn = $("acceptBtn");
+  if (btn) { btn.disabled = true; btn.textContent = "Booking…"; }
+  try {
+    const res = await api(
+      `/api/board/agency/${myAgency}/accept-run?supplier_ids=${basket.join(",")}`,
+      { method: "POST" });
+    tonight = res.tonight;
+    basket = []; planned = null;
+    await refreshAll();
+    $("ledgerCount").textContent = tonight.length;
+    if (res.leftOnOffer.length)
+      alert("Too much for one load — still on offer: " + res.leftOnOffer.join(", "));
+    loadOffers();
+    openLedger();
+  } catch (e) {
+    alert(e.message);
+    if (btn) { btn.disabled = false; btn.textContent = "Accept this run & log receipts"; }
+  }
+}
+
 function renderPlan(p) {
-  if (!p.feasible) return `<div class="empty">${p.reason}</div>`;
+  if (!p.feasible) return `<div class="offer dead"><div class="offer-sub">${p.reason}</div></div>`;
+  const deadPct = Math.round(p.deadheadMi / p.miles * 100);
   return `
-    <div class="sec-head">Combined run</div>
     <div class="offer taken">
-      <div class="offer-top"><span class="offer-name">${p.pickups.length} pickups
-        → ${p.stops.length} drops</span>
-        <span class="offer-net">${fmt$(p.net)}</span></div>
-      <div class="offer-sub">
-        ${p.loadedLbs}/${p.capacityLbs} lb &middot; ${p.miles} mi &middot;
-        ${fmtInt(p.minutes)} min &middot; ${p.crew} crew<br>
-        ${p.pickups.map((x, i) => `${i + 1}. ${x.name} (${fmtInt(x.lbs)} lb, ${x.window})`).join("<br>")}
-        <br>${p.stops.map((x, i) => `→ ${x.location} · ${fmtInt(x.meals)} meals`).join("<br>")}
+      <div class="offer-top">
+        <span class="offer-name">${p.pickups.length} pickup${p.pickups.length > 1 ? "s" : ""}
+          → ${p.stops.length} drop${p.stops.length > 1 ? "s" : ""}</span>
+        <span class="offer-net">${fmt$(p.net)}</span>
       </div>
+      <div class="offer-sub">
+        ${p.loadedLbs}/${p.capacityLbs} lb loaded &middot; ${fmtInt(p.minutes)} min &middot;
+        ${p.crew} crew<br>
+        ${p.pickups.map((x, i) => `<b>${i + 1}.</b> ${x.name} — ${fmtInt(x.lbs)} lb${
+          x.offeredLbs && x.lbs < x.offeredLbs
+            ? ` <span style="color:var(--bad)">of ${fmtInt(x.offeredLbs)}</span>` : ""}
+          <span style="opacity:.7">(${x.window})</span>`).join("<br>")}
+        <br>${p.stops.map((x, i) => `<b>${p.pickups.length + i + 1}.</b> ${x.location}
+          — ${fmtInt(x.meals)} meals`).join("<br>")}
+      </div>
+
+      <div class="mi-split">
+        <div class="mi-bar">
+          <span class="mi-work" style="width:${100 - deadPct}%"></span>
+          <span class="mi-dead" style="width:${deadPct}%"></span>
+        </div>
+        <div class="offer-sub" style="margin-top:4px">
+          ${p.miles} mi total — <b>${p.workingMi} carrying food</b>,
+          <b style="color:var(--bad)">${p.deadheadMi} empty</b> to and from base
+          (${deadPct}%).${deadPct > 50
+            ? " A depot this far out spends most of its miles empty; a closer collector will usually beat it."
+            : ""}
+        </div>
+      </div>
+
       <div class="offer-sub" style="margin-top:6px">
-        Costs ${fmt$(p.cost)} together against ${fmt$(p.soloCost)} run separately —
-        <b style="color:var(--c-route)">saves ${fmt$(p.saved)}</b>.
+        ${fmt$(p.cost)} together${p.pickups.length > 1
+          ? ` against ${fmt$(p.soloCost)} as separate runs —
+             <b style="color:var(--c-route)">saves ${fmt$(p.saved)}</b>` : ""}.
+        ${p.partial ? `<br>Only ${fmtInt(p.partial.took)} lb of ${p.partial.name}'s
+          ${fmtInt(p.partial.of)} lb fits; ${fmtInt(p.partial.leaves)} lb stays.` : ""}
         ${p.missedWindows.length
           ? `<br><span style="color:var(--bad)">Cannot make the window at
              ${p.missedWindows.join(", ")}.</span>` : ""}
         ${p.leftBehind.length
-          ? `<br>Too much for one load — ${p.leftBehind.map(x => x.name).join(", ")}
-             stays for another run.` : ""}
+          ? `<br>Over capacity — ${p.leftBehind.map(x => x.name).join(", ")}
+             stays on offer.` : ""}
       </div>
     </div>`;
 }
 
 function drawPlan(p) {
   clearFx();
-  const pts = [[p.collector.lat, p.collector.lon],
-               ...p.pickups.map(x => [x.lat, x.lon]),
-               ...p.stops.map(x => [x.lat, x.lon]),
-               [p.collector.lat, p.collector.lon]];
-  fxLayer.addLayer(L.polyline(pts.slice(0, p.pickups.length + 1), {
+  const base = [p.collector.lat, p.collector.lon];
+  const pick = p.pickups.map(x => [x.lat, x.lon]);
+  const drop = p.stops.map(x => [x.lat, x.lon]);
+
+  /* Empty legs are drawn faint: with a depot far from downtown they are most
+     of the route, and showing them the same weight as the working legs is what
+     made the map look like two meaningless lines. */
+  const dead = { color: themeColor("--muted"), bellyRole: "--muted",
+                 weight: 2, opacity: .55, dashArray: "3 7", interactive: false };
+  fxLayer.addLayer(L.polyline([base, pick[0]], dead));
+  fxLayer.addLayer(L.polyline([drop[drop.length - 1], base], dead));
+
+  fxLayer.addLayer(L.polyline(pick, {
     color: themeColor("--c-supplier"), bellyRole: "--c-supplier",
-    weight: 3, opacity: .9, className: "route-leg1", interactive: false }));
-  fxLayer.addLayer(L.polyline(pts.slice(p.pickups.length), {
+    weight: 3, opacity: .95, className: "route-leg1", interactive: false }));
+  fxLayer.addLayer(L.polyline([pick[pick.length - 1], ...drop], {
     color: themeColor("--c-route"), bellyRole: "--c-route",
     weight: 3.5, opacity: .95, className: "route-leg2", interactive: false }));
-  p.pickups.forEach((x, i) => fxLayer.addLayer(L.marker([x.lat, x.lon], {
-    icon: L.divIcon({ className: "", html: `<div class="mk-seq">${i + 1}</div>`,
-                      iconSize: [20, 20], iconAnchor: [10, 10] }), interactive: false })));
-  map.flyToBounds(L.latLngBounds(pts).pad(0.18), { duration: 0.8 });
+
+  /* every waypoint numbered, so the order is readable even when they overlap */
+  [...p.pickups, ...p.stops].forEach((x, i) => fxLayer.addLayer(
+    L.marker([x.lat, x.lon], {
+      icon: L.divIcon({ className: "",
+        html: `<div class="mk-seq ${i < p.pickups.length ? "" : "drop"}">${i + 1}</div>`,
+        iconSize: [20, 20], iconAnchor: [10, 10] }),
+      zIndexOffset: 950, interactive: false })));
+
+  /* fit the working part of the route, not the depot -- otherwise downtown is
+     a dot at the bottom of the screen */
+  map.flyToBounds(L.latLngBounds([...pick, ...drop]).pad(0.35), { duration: 0.8 });
 }
 
 function drawAgencyMarkers() {
