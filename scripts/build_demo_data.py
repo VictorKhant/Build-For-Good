@@ -15,7 +15,8 @@ The surplus reports are SIMULATED (seeded, reproducible): the platform's real
 input would be voluntary end-of-day reporting, which doesn't exist yet.
 Quantities are scaled to facility type/size. Everything else is real data.
 """
-import csv, json, random, re
+import csv, json, math, random, re
+from datetime import date, timedelta
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -190,6 +191,56 @@ for i, p in enumerate(csv.DictReader(open(ROOT / "newdata/mobile_pantries.csv"))
                    else f"no unit tonight — runs {p['day_list']}"),
     })
 
+# ---------------------------------------------------------------- history
+# Seeded ledger of the past week's confirmed deliveries. Generated AFTER all
+# other rng draws so adding it does not disturb tonight's simulated reports.
+LBS_PER_MEAL, MEAL_VALUE, FMV_PER_LB = 1.2, 4.25, 1.79
+WAGE, PER_MILE, SPEED, HANDLING, ROAD = 17.75, 0.76, 18, 25, 1.3
+
+
+def road_mi(a, b):
+    rad = math.pi / 180
+    dlat, dlon = (b["lat"] - a["lat"]) * rad, (b["lon"] - a["lon"]) * rad
+    s = (math.sin(dlat / 2) ** 2 +
+         math.cos(a["lat"] * rad) * math.cos(b["lat"] * rad) * math.sin(dlon / 2) ** 2)
+    return 2 * 3958.76 * math.asin(math.sqrt(s)) * ROAD
+
+
+HIST_LBS = {"grocery": (120, 420), "hotel": (30, 160), "venue": (180, 600), "health": (60, 180)}
+hist_collectors = (
+    [{**a, "kind": "agency", "cap": 2000} for a in agencies] +
+    [{**p, "kind": "pantry", "cap": 150} for p in pantries if p["whyNot"] != "serves home-bound individuals only"]
+)
+top_blocks = hotspots[:30]
+DEMO_DATE = date(2026, 8, 20)
+history = []
+for back in range(7, 0, -1):
+    d = DEMO_DATE - timedelta(days=back)
+    for _ in range(rng.randint(2, 5)):
+        b = rng.choice(suppliers)
+        pool = [c for c in hist_collectors if b["surplus"] != "prepared" or c["acceptsPrepared"]]
+        col = rng.choice(pool)
+        lbs = rng.randint(*HIST_LBS[b["type"]])
+        collected = min(lbs, col["cap"])
+        meals = collected / LBS_PER_MEAL
+        h = rng.choice(top_blocks)
+        served = min(meals, h["need"])
+        boost = 1 + 0.5 * (7 - min(h["accessDays"], 7)) / 7
+        reward = served * MEAL_VALUE * boost + (meals - served) * MEAL_VALUE * 0.5
+        miles = road_mi(col, b) + road_mi(b, h)
+        cost = (miles / SPEED * 60 + HANDLING) / 60 * WAGE + miles * PER_MILE
+        history.append({
+            "receipt": f"BU-{d:%Y%m%d}-{len(history):03d}",
+            "date": d.isoformat(),
+            "time": f"{rng.randint(17, 20)}:{rng.randint(0, 59):02d}",
+            "supplierId": b["id"], "supplier": b["name"],
+            "lbs": lbs, "collectedLbs": collected,
+            "servedMeals": round(served), "surplusMeals": round(meals - served),
+            "collector": col["name"], "kind": col["kind"],
+            "hotspotId": h["id"], "hotspot": h["location"],
+            "fmv": round(lbs * FMV_PER_LB, 2), "net": round(reward - cost, 2),
+        })
+
 # ---------------------------------------------------------------- constants
 constants = {
     "LBS_PER_MEAL": 1.2,        # Feeding America conversion
@@ -204,6 +255,8 @@ constants = {
     "ACCESS_BOOST_MAX": 0.5,    # reward boost for blocks with poor weekly food access
     "AGENCY_CAPACITY_LBS": 2000,  # box truck (demo assumption)
     "PANTRY_CAPACITY_LBS": 150,   # pantry van / mobile unit (demo assumption)
+    "DEMO_DATE": "2026-08-20",    # the fixed demo evening (a 3rd Thursday)
+    "MAX_DROPS_PER_NIGHT": 2,     # serving limit: deliveries per hotspot per night
 }
 
 out = ROOT / "demo/data.js"
@@ -213,6 +266,7 @@ out.write_text(
     f"const SUPPLIERS = {json.dumps(suppliers, indent=1)};\n"
     f"const AGENCIES = {json.dumps(agencies, indent=1)};\n"
     f"const PANTRIES = {json.dumps(pantries, indent=1)};\n"
+    f"const HISTORY = {json.dumps(history, indent=1)};\n"
     f"const CONSTANTS = {json.dumps(constants, indent=1)};\n"
 )
 reporting = [s for s in suppliers if s["report"]]
@@ -224,3 +278,5 @@ print(f"  suppliers: {len(suppliers)} ({len(reporting)} reporting tonight, "
 print(f"  agencies: {len(agencies)} matchable")
 print(f"  pantries: {len(pantries)} ({len(dispatchable)} units available tonight: "
       + ", ".join(p['name'] for p in dispatchable) + ")")
+print(f"  history: {len(history)} deliveries over 7 days, "
+      f"{sum(r['lbs'] for r in history)} lbs, ${sum(r['fmv'] for r in history):,.0f} FMV")
