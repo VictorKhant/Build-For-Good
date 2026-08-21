@@ -1,0 +1,84 @@
+San Diego Downtown 无家可归者集中区域统计说明
+================================================
+
+一、基本情况
+
+本分析用于识别 San Diego Downtown 无家可归者较集中的社区和街区，为食物分发点、流动服务点及配送 Hub 的选址提供参考。
+
+数据来源：
+1. dataset/BlockLevel_Counts_Panel261.csv
+   包含 261 个长期保持一致的 Downtown 街区。
+2. dataset/Downtown_BlockGrid.csv
+   提供街区所属社区、道路名称、经纬度等地理信息。
+
+数据时间范围：2018-01-24 至 2025-01-31。
+总计包含 12 个街头统计日期。
+
+
+二、统计方法
+
+每个街区在每次统计中的人数指标为：
+
+    person-equivalents = individuals + tents_structures + vehicles
+
+也就是将露宿个人、帐篷/临时构筑物和车辆三类观测相加。这里没有把 total 字段再次加入，避免重复计算。
+
+街区排名主要依据“12 次统计的平均 person-equivalents”，从高到低排列。同时保留以下辅助指标：
+
+- latest_people：2025-01-31 最新一次统计值
+- historical_max：历史单次最高值
+- dates_nonzero：出现过非零观测的统计次数
+- persistence：非零次数占全部 12 次统计的比例
+
+社区排名方法：先把同一社区内所有街区在同一日期的观测相加，再计算 12 次统计的社区平均值。
+
+采用固定的 Panel261 数据，是为了保证所有街区具有一致的时间覆盖，避免因 2022 年之后统计边界增加而产生不可比的增长。
+
+
+三、社区集中程度排名
+
+排名  社区             历史平均    最新值    历史最高值
+1     East Village      418.33      353       545
+2     City Center       149.58      178       202
+3     Cortez             60.67       47       110
+4     Gaslamp            48.92       41        84
+5     Columbia           42.92       34        64
+6     Marina              26.33       17        46
+
+结论：East Village 是最显著的集中区域，其历史平均观测量约为 City Center 的 2.8 倍。City Center 排名第二，其他四个社区的平均观测量明显较低。
+
+
+四、重点街区排名（前 10 名）
+
+排名  路口/街区                 社区           历史平均  最新值  历史最高值
+1     17th St & K St           East Village     56.50     61       107
+2     15th St & Imperial Ave   East Village     26.08     18        58
+3     9th Ave & E St           East Village     21.33      8        37
+4     Park Blvd & J St         East Village     21.17     25        49
+5     8th Ave & E St           East Village     20.83     11        37
+6     3rd Ave & A St           City Center      20.33     64        64
+7     16th St & Market St      East Village     18.50     12        39
+8     17th St & Island Ave     East Village     13.00      5        30
+9     5th Ave & Cedar St       Cortez           10.92     13        22
+10    16th St & J St           East Village     10.83      8        19
+
+17th St & K St 是历史上最突出的热点，并且最新一期仍保持较高观测值。3rd Ave & A St 的历史平均排名第六，但最新值升至 64，是最新一期尤其值得关注的位置。
+
+
+五、结果解释与限制
+
+1. 这些数字是街头观察结果，不是对唯一人口的精确统计。同一个人可能在不同日期被重复观察。
+2. tents_structures 和 vehicles 是观测单位，不等同于经过核实的实际居住人数，因此结果应称为 person-equivalents 或观测强度，而不是精确人口数。
+3. 排名反映长期集中程度，不代表每一天的实时情况。
+4. 统计日期之间间隔不完全一致，且每年只有部分月份具有街区级观测。
+5. 排名适合辅助资源规划，但实际选址还应考虑服务时间、步行距离、安全、隐私、土地许可和现有服务覆盖。
+
+
+六、生成方式
+
+运行以下命令可以重新分析并更新 CSV 排名：
+
+    python3 analyze_homeless_hotspots.py
+
+完整街区排名：homeless_hotspots_ranked.csv
+完整社区排名：homeless_areas_ranked.csv

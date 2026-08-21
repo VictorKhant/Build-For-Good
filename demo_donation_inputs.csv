@@ -1,0 +1,7 @@
+donation_id,supplier_name,supplier_type,lat,lon,food_type,quantity_lbs,ready_at,expires_at,data_status
+demo_001,Demo Gaslamp Restaurant,restaurant,32.710156,-117.160231,prepared_hot,48,2026-08-20T18:00:00-07:00,2026-08-20T20:00:00-07:00,fictional_demo
+demo_002,Demo East Village Bakery,bakery,32.711201,-117.153872,bakery,30,2026-08-20T17:30:00-07:00,2026-08-20T22:00:00-07:00,fictional_demo
+demo_003,Demo Marina Hotel,hotel,32.708941,-117.168402,prepared_cold,96,2026-08-20T19:00:00-07:00,2026-08-20T23:00:00-07:00,fictional_demo
+demo_004,Demo City Center Cafe,restaurant,32.716388,-117.159928,packaged_dry,24,2026-08-20T16:00:00-07:00,2026-08-21T12:00:00-07:00,fictional_demo
+demo_005,Demo Columbia Market,supermarket,32.718147,-117.166092,produce,120,2026-08-20T15:00:00-07:00,2026-08-21T09:00:00-07:00,fictional_demo
+demo_006,Demo East Village Restaurant,restaurant,32.707842,-117.149774,prepared_hot,72,2026-08-20T18:30:00-07:00,2026-08-20T20:30:00-07:00,fictional_demo

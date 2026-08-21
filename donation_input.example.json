@@ -1,0 +1,10 @@
+{
+  "supplier_name": "Example Downtown Hotel",
+  "supplier_type": "hotel",
+  "lat": 32.715,
+  "lon": -117.161,
+  "food_type": "prepared_cold",
+  "quantity_lbs": 60,
+  "ready_at": "2026-08-20T18:00:00-07:00",
+  "expires_at": "2026-08-20T21:00:00-07:00"
+}
