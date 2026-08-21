@@ -160,7 +160,11 @@ const TRUCK_SVG = '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M3 5h11
 /* A truck only for agencies that can actually be dispatched. The rest are
    fixed sites that receive donations -- drawing them with a truck would
    promise a fleet they do not have. */
-for (const a of AGENCIES) {
+/* Collectors are visible to a business -- those are the people who come to
+   it. A pantry that runs a van collects too, so gating pantries to the agency
+   view left the matched collector undrawn and the route line ending in blank
+   map. The public view draws its own list in fxLayer, so it takes neither. */
+for (const a of (role === "public" ? [] : AGENCIES)) {
   const collects = a.mobileCapable !== false;
   const html = collects
     ? `<div class="mk-agency" id="col-${a.id}">${TRUCK_SVG}</div>`
@@ -183,7 +187,9 @@ for (const a of AGENCIES) {
    view builds its OWN pantry markers from the search result (renderPantries)
    so only pantries within the searched range ever show there, and only
    after a search -- these always-on markers would defeat that. */
-for (const p of (role === "agency" ? PANTRIES : [])) {
+for (const p of (role === "agency" ? PANTRIES
+                 : role === "business" ? PANTRIES.filter(x => x.dispatchable)
+                 : [])) {
   const cls = p.dispatchable ? "mk-pantry" : "mk-pantry idle";
   const status = p.dispatchable
     ? '<br><b class="tip-pantry">mobile unit available tonight</b>'
@@ -1167,6 +1173,53 @@ function bizMatch(s) {
     </div>`;
 }
 
+/* RIGHT, business view: who is near enough to collect from this restaurant.
+   "Restaurants local and agencies" was the ask, and a donor's real question is
+   who their collectors are -- so the panel lists them by distance and marks
+   the one that won. No hotspot, no onward leg: where the food goes after
+   pickup is not shown to a donor. */
+function renderLocalCollectors(s) {
+  const cols = [
+    ...AGENCIES.filter(a => a.mobileCapable !== false)
+      .map(a => ({ name: a.name, sub: a.program || "", kind: "agency",
+                   lat: a.lat, lon: a.lon, prepared: a.acceptsPrepared })),
+    ...PANTRIES.filter(p => p.dispatchable)
+      .map(p => ({ name: p.name, sub: p.operator || "", kind: "pantry",
+                   lat: p.lat, lon: p.lon, prepared: p.acceptsPrepared })),
+  ].map(c => ({ ...c, mi: haversineMi(c, s) }))
+   .sort((a, b) => a.mi - b.mi);
+
+  const won = s.__match && s.__match.ok ? s.__match.collector : null;
+  const prepared = s.surplus === "prepared";
+
+  $("resultEmpty").style.display = "none";
+  $("resultBody").hidden = false;
+  $("resultBody").innerHTML = `
+    <div class="rb-eyebrow">Who can collect from you</div>
+    <div class="rb-source">${s.name} &middot; ${fmtInt(s.report.lbs)} lb
+      ${s.surplus}${won ? `<br><b style="color:var(--c-route)">${won}</b> is
+      collecting tonight` : "<br>no collector matched yet"}</div>
+    ${cols.map(c => {
+      const isWon = c.name === won;
+      const cannot = prepared && !c.prepared;
+      return `
+      <div class="offer ${isWon ? "taken" : (cannot ? "dead" : "")}">
+        <div class="offer-top">
+          <span>${c.kind === "agency" ? "🚚" : "🚐"}</span>
+          <span class="offer-name">${c.name}</span>
+          <span class="offer-net">${c.mi.toFixed(1)} mi</span>
+        </div>
+        <div class="offer-sub">${c.sub}${isWon ? " &middot; <b>collecting tonight</b>" : ""}
+          ${cannot ? "<br><span style=\"color:var(--bad)\">does not take prepared food</span>" : ""}
+        </div>
+      </div>`;
+    }).join("")}
+    <div class="offer-sub" style="margin-top:10px">
+      Distances are straight-line from your address. You are never charged and
+      never arrange the run.
+    </div>`;
+}
+
 async function pickRestaurant(id) {
   selectedId = id;
   const s = SUPPLIERS.find(x => x.id === id);
@@ -1182,6 +1235,7 @@ async function pickRestaurant(id) {
   } catch (e) { s.__match = { ok: false, reason: e.message }; }
 
   renderBusiness();
+  renderLocalCollectors(s);
 
   /* one line: the collector coming to this restaurant, and nothing else */
   const m = s.__match;
