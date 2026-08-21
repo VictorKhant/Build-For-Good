@@ -38,6 +38,7 @@ WEEKDAYS = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", 
 # clock reading Wednesday would have units on site on the wrong night. 18:30
 # is the evening these reports come in — kitchens close, surplus is known.
 from datetime import datetime as _dt
+from datetime import timedelta
 DEMO_NOW = _dt(2026, 8, 20, 18, 30)   # Thursday, 3rd Thursday of Aug 2026
 
 # Agencies with no coordinates in the source data, hand-placed to the same
@@ -69,6 +70,8 @@ CONSTANTS = {
     "ACCESS_BOOST_MAX": 0.5,      # reward boost where weekly food access is poor
     "AGENCY_CAPACITY_LBS": 2000,  # box truck
     "PANTRY_CAPACITY_LBS": 150,   # pantry van / mobile unit
+    "DEMO_DATE": "2026-08-20",    # the fixed demo evening (a 3rd Thursday)
+    "MAX_DROPS_PER_NIGHT": 2,     # serving limit: deliveries per hotspot per night
 
     # --- added by the merge: the donor now states expiry and a pickup window,
     # so time has to enter the model ---
@@ -311,4 +314,86 @@ def load_pantries() -> list[dict]:
                        else "serves home-bound individuals only" if not public
                        else f"no unit tonight — runs {p['day_list']}"),
         })
+    return out
+
+
+# --------------------------------------------------------------------------
+# history -- the past week's confirmed deliveries
+# --------------------------------------------------------------------------
+
+def load_history(suppliers=None, agencies=None, pantries=None,
+                 hotspots=None) -> list[dict]:
+    """A seeded ledger of the previous seven evenings.
+
+    Drawn from its OWN generator, and only after the caller has built
+    everything else, so adding history cannot disturb tonight's simulated
+    reports. Gives the ledger view something to sit on: a platform with no
+    yesterday looks like a prototype.
+    """
+    import math
+
+    suppliers = suppliers if suppliers is not None else load_suppliers()
+    agencies = agencies if agencies is not None else load_agencies()
+    pantries = pantries if pantries is not None else load_pantries()
+    hotspots = hotspots if hotspots is not None else load_hotspots()
+
+    C = CONSTANTS
+    rng = random.Random(SEED + 7)
+
+    def road_mi(a, b):
+        rad = math.pi / 180
+        dlat = (b["lat"] - a["lat"]) * rad
+        dlon = (b["lon"] - a["lon"]) * rad
+        x = (math.sin(dlat / 2) ** 2 + math.cos(a["lat"] * rad)
+             * math.cos(b["lat"] * rad) * math.sin(dlon / 2) ** 2)
+        return 2 * 3958.76 * math.asin(math.sqrt(x)) * C["ROAD_FACTOR"]
+
+    hist_lbs = {"grocery": (120, 420), "hotel": (30, 160),
+                "venue": (180, 600), "health": (60, 180),
+                "restaurant": (25, 120)}
+    collectors = (
+        [{**a, "kind": "agency", "cap": C["AGENCY_CAPACITY_LBS"]} for a in agencies]
+        + [{**p, "kind": "pantry", "cap": C["PANTRY_CAPACITY_LBS"]}
+           for p in pantries if p["whyNot"] != "serves home-bound individuals only"]
+    )
+    top_blocks = hotspots[:30]
+    demo_date = _dt.fromisoformat(C["DEMO_DATE"]).date()
+
+    # only businesses that were on the platform back then
+    pool = [s for s in suppliers if not s.get("registered")]
+    if not pool or not collectors or not top_blocks:
+        return []
+
+    out = []
+    for back in range(7, 0, -1):
+        day = demo_date - timedelta(days=back)
+        for _ in range(rng.randint(2, 5)):
+            b = rng.choice(pool)
+            eligible = [c for c in collectors
+                        if b["surplus"] != "prepared" or c["acceptsPrepared"]]
+            if not eligible:
+                continue
+            col = rng.choice(eligible)
+            lbs = rng.randint(*hist_lbs.get(b["type"], (60, 200)))
+            collected = min(lbs, col["cap"])
+            meals = collected / C["LBS_PER_MEAL"]
+            h = rng.choice(top_blocks)
+            served = min(meals, h["need"])
+            boost = 1 + C["ACCESS_BOOST_MAX"] * (7 - min(h["accessDays"], 7)) / 7
+            reward = served * C["MEAL_VALUE"] * boost + (meals - served) * C["MEAL_VALUE"] * 0.5
+            miles = road_mi(col, b) + road_mi(b, h)
+            cost = ((miles / C["AVG_SPEED_MPH"] * 60 + C["HANDLING_MIN"]) / 60
+                    * C["WAGE_PER_HR"] + miles * C["COST_PER_MILE"])
+            out.append({
+                "receipt": f"BU-{day:%Y%m%d}-{len(out):03d}",
+                "date": day.isoformat(),
+                "time": f"{rng.randint(17, 20)}:{rng.randint(0, 59):02d}",
+                "supplierId": b["id"], "supplier": b["name"],
+                "lbs": lbs, "collectedLbs": collected,
+                "servedMeals": round(served), "surplusMeals": round(meals - served),
+                "collector": col["name"], "kind": col["kind"],
+                "hotspotId": h["id"], "hotspot": h["location"],
+                "fmv": round(lbs * C["FMV_PER_LB"], 2),
+                "net": round(reward - cost, 2),
+            })
     return out
