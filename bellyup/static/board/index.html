@@ -166,7 +166,13 @@
       <div class="sim-title">Network intelligence</div>
       <div class="sim-live"><span></span> Hybrid optimized network</div>
       <div class="sim-status" id="simStatus">Loading the live operating network…</div>
-      <button id="simRegenerate" class="sim-regenerate">Regenerate network</button>
+      <div class="sim-network-actions">
+        <button id="simRegenerate" class="sim-regenerate">Regenerate network</button>
+        <label class="sim-network-toggle" title="Show or hide Patrick's optimized road network">
+          <input id="simShowNetwork" type="checkbox" checked>
+          <span>Show Network</span>
+        </label>
+      </div>
       <button id="simRestore" class="sim-restore" hidden>Restore all routes</button>
     </section>
     <section class="network-detail" id="networkDetail"></section>

@@ -126,6 +126,13 @@ const simulationLayer = L.layerGroup().addTo(map); // complete multi-truck netwo
 const offerRouteLayer = L.layerGroup().addTo(map); // temporary offer previews only
 let simulationRoutes = [], simulationAllocations = [], simulationAssigned = 0;
 
+function setNetworkVisibility(show) {
+  for (const layer of [simulationLayer, offerRouteLayer]) {
+    if (show && !map.hasLayer(layer)) layer.addTo(map);
+    if (!show && map.hasLayer(layer)) map.removeLayer(layer);
+  }
+}
+
 const TRUCK_SVG = '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M3 5h11v9H3zM14 8h4l3 3v3h-7zM6 18a2 2 0 1 0 0-4 2 2 0 0 0 0 4zm11 0a2 2 0 1 0 0-4 2 2 0 0 0 0 4z"/></svg>';
 const typeIcon = { grocery: "🛒", hotel: "🏨", venue: "🏟", health: "🏥", restaurant: "🍽" };
 
@@ -2174,6 +2181,9 @@ async function loadLiveNetwork() {
   wireRoles();
   $("forecastBtn").addEventListener("click", toggleForecast);
   $("simRegenerate").addEventListener("click", runSimulation);
+  $("simShowNetwork").addEventListener("change", event => {
+    setNetworkVisibility(event.currentTarget.checked);
+  });
   $("simRestore").addEventListener("click", () => {
     drawSimulationRoutes(simulationRoutes);
     renderSimulationPanel("route_optimized");
