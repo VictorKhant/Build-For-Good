@@ -215,8 +215,18 @@ def optout_count() -> int:
 
 
 def next_id() -> str:
-    used = {r.get("supplier_id") for r in _read(REPORTS)}
-    n = 100
-    while f"R{n}" in used:
-        n += 1
-    return f"R{n}"
+    """The id the board WILL give the next self-registered restaurant.
+
+    This has to agree with demo_data.load_suppliers, which numbers the
+    self-registered rows positionally -- R100 + index in businesses.csv order
+    -- and not from this file at all. Reading surplus_reports.csv instead made
+    the two disagree the moment a restaurant registered without leaving a row
+    here: register() handed back R100 while the board called the new arrival
+    R103, so the UI's `pickRestaurant(supplier.id)` selected whoever really
+    held R100 and reported "kim has not reported surplus tonight" at someone
+    who had just signed up. Same basis, same answer.
+
+    Called BEFORE the new row is appended, so the count of existing
+    self-registered rows IS the new row's index.
+    """
+    return f"R{100 + sum(1 for r in _read(BUSINESSES) if is_self_registered(r))}"

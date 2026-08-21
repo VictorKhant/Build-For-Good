@@ -443,7 +443,6 @@ def load_suppliers(hotspots=None) -> list[dict]:
         })
     out.sort(key=lambda s: (s["report"] is None, s["report"]["time"] if s["report"] else ""))
 
-    ids = registry.next_id()
     own = []
     for n, b in enumerate(mine):
         own.append({
