@@ -1058,6 +1058,7 @@ function wireForm() {
 
 function showEmpty(msg) {
   $("resultBody").hidden = true;
+  $("resultBody").innerHTML = "";     // don't keep the last role's panel around
   const e = $("resultEmpty");
   e.style.display = "";
   if (msg) e.innerHTML = msg;
@@ -1121,27 +1122,30 @@ function renderBusiness() {
   const reporting = SUPPLIERS.filter(s => s.report);
   const quiet = SUPPLIERS.filter(s => !s.report);
 
+  const badge = s => {
+    if (s.status === "delivered") return '<span class="rc-saved">DELIVERED</span>';
+    if (s.status === "accepted")  return '<span class="rc-saved">ACCEPTED</span>';
+    if (s.status === "requested") return '<span class="rc-upd">REQUESTED</span>';
+    return "";
+  };
+
   $("feed").innerHTML = `
     <div class="sec-head">Reporting tonight (${reporting.length})</div>
-    ${reporting.map(s => {
-      const delivered = tonight.find(r => r.supplierId === s.id);
-      const claim = CLAIMS[s.id];
-      const claimAgency = claim && AGENCIES.find(a => a.id === claim.agency_id);
-      const statusLine = delivered
-        ? `<b style="color:var(--c-route)">collected by ${delivered.collector}</b>`
-        : claimAgency
-        ? `<b style="color:var(--c-route)">claimed by ${claimAgency.name} &middot; pickup pending</b>`
-        : "waiting for an agency";
-      return `
+    ${reporting.map(s => `
       <div class="offer pick ${selectedId === s.id ? "on" : ""}" data-pick="${s.id}">
         <div class="offer-top">
           <span>${typeIcon[s.type] || "🍽"}</span>
-          <span class="offer-name">${s.name}</span>
+          <span class="offer-name">${badge(s)}${s.name}</span>
           <span class="offer-net">${fmtInt(s.report.lbs)} lb</span>
+          <button class="rc-edit" data-edit="${s.id}"
+            title="Surplus differs every night — update tonight's numbers">Update</button>
         </div>
-        <div class="offer-sub">${s.report.items || ""}<br>${statusLine}</div>
-        ${selectedId === s.id && s.__match ? bizMatch(s) : ""}
-      </div>`; }).join("")}
+        <div class="offer-sub">${s.report.items || ""}<br>
+          pickup ${s.report.pickupFrom || s.report.time}–${s.report.pickupTo || "?"}
+          ${s.windowClosed ? ' &middot; <span style="color:var(--bad)">window shut</span>' : ""}
+        </div>
+        ${selectedId === s.id ? bizMatch(s) : ""}
+      </div>`).join("")}
     ${quiet.length ? `<div class="sec-head">Quiet tonight (${quiet.length})</div>
       ${quiet.map(s => `
         <button class="quiet-row" data-edit="${s.id}">
@@ -1152,6 +1156,9 @@ function renderBusiness() {
 
   $("feed").querySelectorAll("[data-pick]").forEach(el =>
     el.addEventListener("click", ev => {
+      /* Anything inside the detail panel -- the fallback checkbox especially --
+         must not bubble into a re-pick, which would re-render and reset it. */
+      if (ev.target.closest(".pickdetail")) return;
       if (ev.target.dataset.edit) return;
       pickRestaurant(el.dataset.pick);
     }));
@@ -1160,84 +1167,184 @@ function renderBusiness() {
       ev.stopPropagation();
       openForm(SUPPLIERS.find(x => x.id === b.dataset.edit));
     }));
+  $("feed").querySelectorAll("[data-req]").forEach(b =>
+    b.addEventListener("click", async ev => {
+      ev.stopPropagation();
+      await sendRequest(b.dataset.req);
+    }));
+  $("feed").querySelectorAll("[data-cancel]").forEach(b =>
+    b.addEventListener("click", async ev => {
+      ev.stopPropagation();
+      await cancelRequest(b.dataset.cancel);
+    }));
 
   $("feedFoot").innerHTML =
-    `<span class="dot dot-quiet"></span> Collection points only — we never show
-     you where the food is handed out.`;
+    `<span class="dot dot-quiet"></span> Nothing is offered to a collector until
+     you request a pickup.`;
   renderStats();
 }
 
-/* The match belongs beside the restaurant it is for, not across the screen. */
+/* The request lives beside the restaurant it belongs to: who it was matched
+   to, whether it has been asked for yet, and who has said no. */
 function bizMatch(s) {
   const m = s.__match;
-  if (!m) return "";
+  const to = s.matchedTo || (m && m.ok ? m.collector : null);
+
+  if (s.status === "delivered")
+    return `<div class="pickdetail"><div class="pd-row"><span class="pd-k">Delivered by</span>
+      <span class="pd-v">${s.acceptedBy || to}</span></div></div>`;
+
+  if (s.status === "accepted")
+    return `<div class="pickdetail">
+      <div class="pd-row"><span class="pd-k">Accepted by</span>
+        <span class="pd-v">${s.acceptedBy}</span></div>
+      <div class="pd-note">They are coming for it. Nothing more for you to do.</div>
+    </div>`;
+
+  if (s.status === "declined")
+    return `<div class="pickdetail bad">
+      <div class="pd-row"><span class="pd-k">Declined by</span>
+        <span class="pd-v">${(s.declinedBy || []).join(", ")}</span></div>
+      <div class="pd-note">You asked them only. Nobody else can see it.
+        Request again to open it to any collector.</div>
+      <button class="offer-act" data-req="${s.id}">Ask anyone who can come</button>
+    </div>`;
+
+  if (s.status === "requested")
+    return `<div class="pickdetail">
+      <div class="pd-row"><span class="pd-k">Requested from</span>
+        <span class="pd-v">${to || "—"}</span></div>
+      <div class="pd-row"><span class="pd-k">Sent</span>
+        <span class="pd-v">${s.requestedAt || ""}</span></div>
+      ${s.declinedBy && s.declinedBy.length ? `<div class="pd-row">
+        <span class="pd-k">Declined by</span>
+        <span class="pd-v">${s.declinedBy.join(", ")}</span></div>` : ""}
+      <div class="pd-note">${s.openToAll
+        ? "Now open to every other collector."
+        : s.allowFallback === false
+          ? "Waiting on them. If they decline, the request ends there — that is what you chose."
+          : "Waiting for them to accept or decline."}
+        ${s.windowClosed ? "<br><b>Your pickup window has closed</b>, so it is off "
+          + "their boards. Update the window to put it back." : ""}</div>
+      <button class="offer-act ghost" data-cancel="${s.id}">Withdraw request</button>
+    </div>`;
+
+  /* reported, not yet requested -- the action */
+  if (!m) return `<div class="pickdetail"><div class="pd-note">Finding a collector…</div></div>`;
   if (!m.ok) return `<div class="pickdetail bad">${m.reason}</div>`;
   return `
     <div class="pickdetail">
-      <div class="pd-row"><span class="pd-k">Collected by</span>
+      <div class="pd-row"><span class="pd-k">Best match</span>
         <span class="pd-v">${m.collector}</span></div>
-      <div class="pd-row"><span class="pd-k">Pickup</span>
-        <span class="pd-v">${m.pickupAt}${m.deferred ? " · held overnight" : ""}</span></div>
       <div class="pd-row"><span class="pd-k">Distance</span>
         <span class="pd-v">${m.miles.toFixed(1)} mi to you</span></div>
       <div class="pd-row"><span class="pd-k">Your deduction</span>
         <span class="pd-v">${fmt$(m.fmv)} est.</span></div>
-      <div class="pd-note">You pay nothing and arrange nothing — the collector
-        does. We do not show you where it goes from here.</div>
+      <div class="pd-note">Nobody has been asked yet. Requesting sends it to
+        ${m.collector} and to them alone.</div>
+      <label class="pd-check">
+        <input type="checkbox" id="fallback-${s.id}" checked>
+        <span>If ${m.collector} declines, let any other collector take it.
+          Untick and a decline ends the request.</span>
+      </label>
+      <button class="offer-act" data-req="${s.id}">Request pickup</button>
     </div>`;
 }
 
-/* RIGHT, business view: who is near enough to collect from this restaurant.
-   "Restaurants local and agencies" was the ask, and a donor's real question is
-   who their collectors are -- so the panel lists them by distance and marks
-   the one that won. No hotspot, no onward leg: where the food goes after
-   pickup is not shown to a donor. */
-function renderLocalCollectors(s) {
-  const cols = [
-    ...AGENCIES.filter(a => a.mobileCapable !== false)
-      .map(a => ({ name: a.name, sub: a.program || "", kind: "agency",
-                   lat: a.lat, lon: a.lon, prepared: a.acceptsPrepared })),
-    ...PANTRIES.filter(p => p.dispatchable)
-      .map(p => ({ name: p.name, sub: p.operator || "", kind: "pantry",
-                   lat: p.lat, lon: p.lon, prepared: p.acceptsPrepared })),
-  ].map(c => ({ ...c, mi: haversineMi(c, s) }))
-   .sort((a, b) => a.mi - b.mi);
+async function sendRequest(id) {
+  /* Default true: the box is ticked, and a re-ask after a decline has no box
+     to read, which is the donor saying open it up. */
+  const box = $(`fallback-${id}`);
+  const fb = box ? box.checked : true;
+  try {
+    await api(`/api/board/request/${id}?allow_fallback=${fb}`, { method: "POST" });
+  }
+  catch (e) { alert(e.message); }
+  await refreshAll();
+  selectedId = id;
+  renderBusiness();
+  renderRequestPanel(SUPPLIERS.find(x => x.id === id));
+}
 
-  const won = s.__match && s.__match.ok ? s.__match.collector : null;
-  const prepared = s.surplus === "prepared";
+async function cancelRequest(id) {
+  try { await api(`/api/board/request/${id}/cancel`, { method: "POST" }); }
+  catch (e) { alert(e.message); }
+  await refreshAll();
+  selectedId = id;
+  renderBusiness();
+  renderRequestPanel(SUPPLIERS.find(x => x.id === id));
+}
 
+/* RIGHT, business view: where this request stands.
+   Not a list of collectors -- a donor does not choose one, and ranking eight
+   of them was information they could not act on. This is the pipeline for the
+   selected restaurant, so the state is legible: reported, requested, accepted,
+   delivered. */
+function renderRequestPanel(s) {
+  if (!s || !s.report) return;
+  const status = s.status || "reported";
+  const steps = status === "declined"
+    ? ["reported", "requested", "declined"]
+    : ["reported", "requested", "accepted", "delivered"];
+  const at = steps.indexOf(status);
+  const label = {
+    reported: ["Surplus reported", "Nobody has been asked yet."],
+    requested: ["Pickup requested", `Sent to ${s.matchedTo || "a collector"}${
+      s.requestedAt ? " at " + s.requestedAt : ""}.`],
+    accepted: ["Accepted", `${s.acceptedBy || "A collector"} is coming for it.`],
+    delivered: ["Delivered", "It reached people tonight."],
+    declined: ["Declined", `${(s.declinedBy || []).join(", ") || "The collector"} `
+      + `said no, and you asked them exclusively.`],
+  };
+
+  /* Build first, reveal second. Unhiding before the template is evaluated
+     means any error in it leaves the PREVIOUS role's panel on screen -- that
+     is how a dead `label[undefined]` showed an agency's offer list to a
+     business. */
+  const html = `
+    <div class="rb-eyebrow">${label[status][0]}</div>
+    <div class="rb-source">${s.name} &middot; ${fmtInt(s.report.lbs)} lb
+      ${s.surplus}<br>${label[s.status][1]}</div>
+
+    <div class="pipeline">
+      ${steps.map((st, i) => `
+        <div class="pl-step ${i < at ? "done" : i === at ? "now" : ""}">
+          <span class="pl-dot"></span>
+          <span class="pl-name">${st}</span>
+        </div>`).join('<span class="pl-line"></span>')}
+    </div>
+
+    <table class="rb-table">
+      <tr><td>Reported</td><td>${s.report.time || "—"}</td></tr>
+      <tr><td>Pickup window</td><td>${s.report.pickupFrom || "—"}–${s.report.pickupTo || "—"}
+        ${s.windowClosed ? ' <span style="color:var(--bad)">shut</span>' : ""}</td></tr>
+      <tr><td>Good until</td><td>${s.report.expiresAt || "—"}</td></tr>
+      <tr><td>Matched collector</td><td>${s.matchedTo || "—"}</td></tr>
+      ${status === "requested" || status === "declined"
+        ? `<tr><td>If declined</td><td>${s.allowFallback === false
+            ? "request ends" : "open to others"}</td></tr>` : ""}
+      ${s.declinedBy && s.declinedBy.length
+        ? `<tr><td>Declined by</td><td>${s.declinedBy.join(", ")}</td></tr>` : ""}
+      <tr class="total"><td>Est. deduction</td>
+        <td>${fmt$(s.report.lbs * (C.FMV_PER_LB || 1.79))}</td></tr>
+    </table>
+
+    <div class="rb-note">🧾 Estimated fair market value at
+      $${C.FMV_PER_LB}/lb toward an IRC &sect;170(e)(3) enhanced deduction.
+      An estimate — confirm with your accountant.</div>
+    ${status === "reported"
+      ? `<div class="rb-note">You are never charged and never arrange the run.
+         Requesting a pickup is the only thing you need to do.</div>` : ""}`;
+
+  $("resultBody").innerHTML = html;
   $("resultEmpty").style.display = "none";
   $("resultBody").hidden = false;
-  $("resultBody").innerHTML = `
-    <div class="rb-eyebrow">Who can collect from you</div>
-    <div class="rb-source">${s.name} &middot; ${fmtInt(s.report.lbs)} lb
-      ${s.surplus}${won ? `<br><b style="color:var(--c-route)">${won}</b> is
-      collecting tonight` : "<br>no collector matched yet"}</div>
-    ${cols.map(c => {
-      const isWon = c.name === won;
-      const cannot = prepared && !c.prepared;
-      return `
-      <div class="offer ${isWon ? "taken" : (cannot ? "dead" : "")}">
-        <div class="offer-top">
-          <span>${c.kind === "agency" ? "🚚" : "🚐"}</span>
-          <span class="offer-name">${c.name}</span>
-          <span class="offer-net">${c.mi.toFixed(1)} mi</span>
-        </div>
-        <div class="offer-sub">${c.sub}${isWon ? " &middot; <b>collecting tonight</b>" : ""}
-          ${cannot ? "<br><span style=\"color:var(--bad)\">does not take prepared food</span>" : ""}
-        </div>
-      </div>`;
-    }).join("")}
-    <div class="offer-sub" style="margin-top:10px">
-      Distances are straight-line from your address. You are never charged and
-      never arrange the run.
-    </div>`;
 }
 
-/* The scan sequence, kept for the business view. It is not decoration: the
-   dispatch really is evaluating every collector against every open block, and
-   the count that ticks up is the actual pair total the server reports. It also
-   covers the round trip, so the panel never flashes empty. */
+/* The scan is not decoration standing in for work. The lines flick out to the
+   collectors actually being considered, and the count that ticks up is the pair
+   total the server reports. It also covers the round trip, so the panel never
+   flashes empty. */
 function beginScan(s) {
   clearFx();
   fxLayer.addLayer(L.marker([s.lat, s.lon], {
@@ -1252,7 +1359,6 @@ function beginScan(s) {
   $("calcCount").textContent = "0";
   $("calcOverlay").classList.add("show");
 
-  /* flick lines out to the collectors actually being considered */
   const cols = [
     ...AGENCIES.filter(a => a.mobileCapable !== false),
     ...PANTRIES.filter(p => p.dispatchable),
@@ -1277,13 +1383,29 @@ function endScan(s, evaluated, collector) {
     if (p < 1) requestAnimationFrame(tick);
   })(t0);
 
-  $("calcTitle").textContent = collector ? "COLLECTOR ASSIGNED" : "NO COLLECTOR";
+  $("calcTitle").textContent = collector ? "COLLECTOR MATCHED" : "NO COLLECTOR";
   $("calcLine").innerHTML = collector
     ? `${collector} &rarr; ${s.name}`
     : `nothing can take this tonight`;
   setTimeout(() => {
     if (selectedId === s.id) $("calcOverlay").classList.remove("show");
   }, 2400);
+}
+
+/* A decline has two possible meanings and the collector should see which one
+   landed, rather than inferring it from a row disappearing. */
+let _toastT = null;
+function toast(msg) {
+  let el = $("toast");
+  if (!el) {
+    el = document.createElement("div");
+    el.id = "toast"; el.className = "toast";
+    document.body.appendChild(el);
+  }
+  el.textContent = msg;
+  el.classList.add("on");
+  clearTimeout(_toastT);
+  _toastT = setTimeout(() => el.classList.remove("on"), 4200);
 }
 
 async function pickRestaurant(id) {
@@ -1310,7 +1432,7 @@ async function pickRestaurant(id) {
 
   endScan(s, s.__evaluated || 0, s.__match.ok ? s.__match.collector : null);
   renderBusiness();
-  renderLocalCollectors(s);
+  renderRequestPanel(s);
 
   /* one line: the collector coming to this restaurant, and nothing else */
   const m = s.__match;
@@ -1324,7 +1446,7 @@ async function pickRestaurant(id) {
     map.flyToBounds(L.latLngBounds([[m.lat, m.lon], [s.lat, s.lon]]).pad(0.3),
                     { duration: 0.7 });
   }
-  /* NOT showEmpty() here -- renderLocalCollectors has just filled this panel,
+  /* NOT showEmpty() here -- renderRequestPanel has just filled this panel,
      and calling it re-hid the content and restored the "pick a restaurant"
      prompt over the top of it. */
 }
@@ -1399,6 +1521,10 @@ async function loadOffers() {
         <span class="offer-net">${o.net != null ? fmt$(o.net) : "—"}</span>
       </div>
       <div class="offer-sub">
+        ${o.exclusiveToMe
+          ? `<span class="tag-excl">${o.allowFallback === false
+              ? "asked you only" : "asked you first"}</span> `
+          : `<span class="tag-open">passed on by others</span> `}
         ${fmtInt(o.report.lbs)} lb ${o.supplier.surplus} ·
         pickup ${o.report.pickupFrom || o.report.time}–${o.report.pickupTo || "?"}
         ${o.report.expiresAt ? `· good until ${o.report.expiresAt}` : ""}
@@ -1407,11 +1533,16 @@ async function loadOffers() {
              · ${o.miles.toFixed(1)} mi alone`
           : `<br><span style="color:var(--bad)">${o.whyNot}</span>`}
       </div>
-      ${o.viable ? `<div class="offer-acts">
-          <button class="offer-act ${inRun ? "ghost" : ""}" data-toggle="${o.supplier.id}">
-            ${inRun ? "Remove" : "Add to run"}</button>
-          <button class="offer-act solo" data-solo="${o.supplier.id}">Accept just this</button>
-        </div>` : ""}
+      <div class="offer-acts">
+        ${o.viable ? `<button class="offer-act ${inRun ? "ghost" : ""}"
+            data-toggle="${o.supplier.id}">${inRun ? "Remove" : "Add to run"}</button>
+          <button class="offer-act solo" data-solo="${o.supplier.id}">Accept</button>` : ""}
+        <button class="offer-act ghost" data-decline="${o.supplier.id}"
+          title="${o.allowFallback === false
+            ? "The donor asked you only — declining ends their request"
+            : "Declining releases it to the other collectors"}"
+          >Decline</button>
+      </div>
     </div>`;
   };
 
@@ -1436,6 +1567,21 @@ async function loadOffers() {
     }));
   $("resultBody").querySelectorAll("[data-solo]").forEach(b =>
     b.addEventListener("click", () => acceptRun([b.dataset.solo])));
+  $("resultBody").querySelectorAll("[data-decline]").forEach(b =>
+    b.addEventListener("click", async () => {
+      try {
+        const r = await api(
+          `/api/board/agency/${myAgency}/decline/${b.dataset.decline}`,
+          { method: "POST" });
+        toast(r.requestEnded
+          ? `${r.supplier}: declined. The donor asked you only, so the request ends.`
+          : `${r.supplier}: declined and released to the other collectors.`);
+      } catch (e) { alert(e.message); }
+      basket = basket.filter(x => x !== b.dataset.decline);
+      planned = null;
+      await refreshAll();
+      loadOffers();
+    }));
   const ab = $("acceptBtn");
   if (ab) ab.addEventListener("click", () => acceptRun(basket));
 

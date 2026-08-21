@@ -26,7 +26,11 @@ from pathlib import Path
 DATA_DIR = Path(__file__).resolve().parent.parent / "dataset"
 
 SEED = 20260820
-N_REPORTING = 14
+# 24 of the 31 businesses report on the demo evening. Thirteen collectors can
+# receive a request (four agencies, four mobile pantries, five drop-off sites),
+# so this is what gives each of them a board with something on it rather than
+# one or two absorbing everything.
+N_REPORTING = 24
 
 # The demo models one fixed evening: Thursday, the 3rd Thursday of the month.
 # Pantry availability resolves against this so the demo is deterministic.
@@ -216,7 +220,22 @@ def _simulate_report(b: dict, order: int, rng: random.Random,
         items = "cafeteria service line overage, packaged meals"
         hours = 12
 
-    hh, mm = divmod(17 * 60 + 25 + order * rng.randint(11, 23), 60)
+    # Reports arrive across the closing evening, spread to fit the window
+    # rather than at a fixed gap: at 24 reports a fixed 11-23 min spacing ran
+    # the last one past midnight and datetime rejected hour 26.
+    #
+    # The start matters as much as the spacing. Beginning at 16:00 put the
+    # earliest pickup windows (report + ~90 min) shut before the 18:30 demo
+    # clock, so the first reports had no viable collector at all. 17:30 keeps
+    # every window live on the evening being demonstrated.
+    span = 5 * 60 + 30                              # 17:30 to 23:00
+    step = span / max(N_REPORTING, 1)
+    # The old spacing consumed one rng draw per report. The spread above does
+    # not need it, but the draw still has to happen: dropping it shifts the
+    # stream and every later quantity with it, which is how Manchester Grand
+    # Hyatt moved from 288 lb to 246.
+    _stream_keeper = rng.randint(11, 23)
+    hh, mm = divmod(int(17 * 60 + 30 + order * step + _stream_keeper % 9), 60)
     reported = f"{hh:02d}:{mm:02d}"
     # Pickup window: from the report time to a couple of hours later, which is
     # how long a kitchen will realistically hold food on a loading dock.
@@ -228,6 +247,9 @@ def _simulate_report(b: dict, order: int, rng: random.Random,
         "expiresAt": f"{xh % 24:02d}:{xm:02d}",
         "expiresInHours": hours,
         "freshness": "fresh",
+        # A report is not a request. Surplus sitting on a loading dock is the
+        # kitchen's business until it asks someone to come for it.
+        "requested": False,
     }
 
 

@@ -822,3 +822,79 @@ def combine_run(collector: dict, suppliers: list[dict], hotspots: list[dict],
         "soloCost": round(solo, 2),
         "saved": round(solo - rc["total"], 2),
     }
+
+
+# --------------------------------------------------------------------------
+# who each report is addressed to
+# --------------------------------------------------------------------------
+
+def request_targets(agencies: list[dict], pantries: list[dict]) -> list[dict]:
+    """Everyone who can be asked to collect.
+
+    Wider than collectors(): a fixed drop-off site cannot run a distribution
+    route, but it can send someone for a pickup and hold the food for people
+    who walk in. So it can receive a request; it just never gets a hotspot leg.
+    """
+    out = collectors(agencies, pantries)
+    out += [{**a, "kind": "dropoff", "capacityLbs": a.get("intakeLbs", 400)}
+            for a in agencies if not a.get("mobileCapable", True)]
+    return out
+
+
+def assign_targets(suppliers: list[dict], agencies: list[dict],
+                   pantries: list[dict], hotspots: list[dict], now: datetime,
+                   ledger: "Ledger | None" = None,
+                   cfg: dict | None = None) -> dict[str, str]:
+    """One collector per report, spread so nobody opens an empty board.
+
+    Ranking each report independently sends them all to whichever one or two
+    collectors happen to score best -- measured on this data, Father Joe's took
+    6 and Feeding San Diego (South Bay) 5, while four of eight collectors got
+    nothing at all. Half the agencies would open an empty board, which is worse
+    than the crowding it replaced.
+
+    So each report goes to its LEAST-LOADED viable collector, with best net
+    value as the tie-break. There is no fixed per-agency cap, because a cap
+    cannot be honoured: 17 of the 24 reports are prepared food and only three
+    collectors accept prepared food at all, so eight reports have exactly one
+    viable collector. Capping that collector would not spread those reports, it
+    would refuse them. Balancing first and ranking second gets the spread the
+    constraints actually allow -- an even split is not available and pretending
+    otherwise would mean sending food to whoever was next in line rather than
+    to whoever can take it.
+
+    Greedy, not optimal. The optimal version is an assignment problem, and
+    Kyle's CP-SAT branch solves it properly; this needs no solver.
+    """
+    c = cfg or C
+    targets = request_targets(agencies, pantries)
+    by_id = {t["id"]: t for t in targets}
+
+    # net value of each (report, collector) pairing
+    options: dict[str, list[tuple[float, str]]] = {}
+    for s in suppliers:
+        if not s.get("report"):
+            continue
+        r = compute(s, agencies, pantries, hotspots, now, ledger)
+        best: dict[str, float] = {}
+        for p in r["pairs"]:
+            cid = p["collector"]["id"]
+            if cid in by_id and p["net"] > best.get(cid, float("-inf")):
+                best[cid] = p["net"]
+        if best:
+            options[s["id"]] = sorted(((v, k) for k, v in best.items()), reverse=True)
+
+    # the report with the most to gain picks first
+    order = sorted(options, key=lambda sid: -options[sid][0][0])
+
+    load: dict[str, int] = {t["id"]: 0 for t in targets}
+    assigned: dict[str, str] = {}
+    for sid in order:
+        # Least-loaded viable collector, best net as the tie-break. This is
+        # already a soft cap: an option with room always beats a busier one,
+        # so a collector only goes above the pack when a report has nowhere
+        # else to go.
+        cid = min(options[sid], key=lambda t: (load[t[1]], -t[0]))[1]
+        assigned[sid] = cid
+        load[cid] += 1
+    return assigned
