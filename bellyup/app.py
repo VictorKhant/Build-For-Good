@@ -688,7 +688,12 @@ def preview_run(agency_id: str, supplier_ids: str = ""):
     to be undone to try a different pairing is a claim that discourages trying.
     """
     b = board()
-    col = next((c for c in dispatch.collectors(b["agencies"], b["pantries"])
+    # request_targets, not collectors: a drop-off site can be asked to collect,
+    # so it must be able to see what the run would look like before it commits.
+    # Checking against collectors() 404'd every preview a drop-off tried, while
+    # accept-run beside it accepted -- so the only way to take a pickup was to
+    # take it unseen.
+    col = next((c for c in dispatch.request_targets(b["agencies"], b["pantries"])
                 if c["id"] == agency_id), None)
     if col is None:
         raise HTTPException(404, "no such collecting agency")

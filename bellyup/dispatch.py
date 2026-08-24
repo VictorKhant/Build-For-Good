@@ -708,9 +708,18 @@ def combine_run(collector: dict, suppliers: list[dict], hotspots: list[dict],
     meals = running / c["LBS_PER_MEAL"]
     at = pickups[-1]
     stops, remaining_meals = [], meals
-    open_blocks = [h for h in hotspots
-                   if h["need"] >= c["MIN_CANDIDATE_NEED"]
-                   and not ledger.is_closed(h, c)[0]]
+    # A fixed drop-off site has no distribution round. The crew drives out for
+    # the food and brings it back to its own building, where people walk in for
+    # it -- routing it on to hotspots would invent exactly the vehicle and the
+    # round that `mobile_capable = no` says it does not have. So it runs the
+    # pickup legs only, and every meal is credited at DROPOFF_CREDIT, which the
+    # reward block below already applies to whatever is not delivered to a
+    # block. Same treatment the single-donation path gives a drop-off.
+    dropoff_run = kind == "dropoff"
+    open_blocks = [] if dropoff_run else [
+        h for h in hotspots
+        if h["need"] >= c["MIN_CANDIDATE_NEED"]
+        and not ledger.is_closed(h, c)[0]]
 
     while remaining_meals >= 1 and len(stops) < max_stops and open_blocks:
         scored = []
@@ -738,7 +747,7 @@ def combine_run(collector: dict, suppliers: list[dict], hotspots: list[dict],
         at = h
         open_blocks = [x for x in open_blocks if x["id"] != h["id"]]
 
-    if not stops:
+    if not stops and not dropoff_run:
         return {"feasible": False,
                 "reason": "every block within reach has been served tonight"}
 
@@ -746,10 +755,13 @@ def combine_run(collector: dict, suppliers: list[dict], hotspots: list[dict],
     miles = leg(collector, pickups[0])
     for a, b in zip(pickups, pickups[1:]):
         miles += leg(a, b)
-    miles += leg(pickups[-1], {"lat": stops[0]["lat"], "lon": stops[0]["lon"]})
-    for a, b in zip(stops, stops[1:]):
-        miles += road_mi(a, b)
-    miles += road_mi(stops[-1], collector)          # home again
+    if stops:
+        miles += leg(pickups[-1], {"lat": stops[0]["lat"], "lon": stops[0]["lon"]})
+        for a, b in zip(stops, stops[1:]):
+            miles += road_mi(a, b)
+        miles += road_mi(stops[-1], collector)      # home again
+    else:
+        miles += road_mi(pickups[-1], collector)    # straight home, still loaded
 
     n_stops = len(pickups) + len(stops)
     minutes = miles / c["AVG_SPEED_MPH"] * 60 + c["HANDLING_MIN"] * n_stops / 2
@@ -768,7 +780,10 @@ def combine_run(collector: dict, suppliers: list[dict], hotspots: list[dict],
     # one, so a single-pickup "combination" reports no saving rather than a
     # rounding artefact.
     solo = 0.0
-    first_stop = {"lat": stops[0]["lat"], "lon": stops[0]["lon"]}
+    # Where a solo run would turn round: the first block for a routed run, the
+    # site itself for a drop-off, which makes each solo trip a plain round trip.
+    first_stop = ({"lat": stops[0]["lat"], "lon": stops[0]["lon"]} if stops
+                  else collector)
     for s in pickups:
         one = (leg(collector, s) + leg(s, first_stop)
                + road_mi(first_stop, collector))
@@ -785,8 +800,12 @@ def combine_run(collector: dict, suppliers: list[dict], hotspots: list[dict],
     # the legs out to the first pickup and home from the last drop carry no
     # food; worth naming, because a depot far from downtown spends most of its
     # miles on them
-    deadhead = (leg(collector, pickups[0])
-                + road_mi(stops[-1], collector))
+    # On a drop-off run the leg home is the loaded one -- the food is on the
+    # vehicle until it is unloaded at the site -- so only the run out to the
+    # first donor is empty.
+    deadhead = leg(collector, pickups[0])
+    if stops:
+        deadhead += road_mi(stops[-1], collector)
 
     return {
         "feasible": True,

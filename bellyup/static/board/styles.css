@@ -942,6 +942,16 @@ body.ledger-open { overflow: hidden; }
   border: 2px solid var(--c-agency);
   box-shadow: 0 0 0 1.5px var(--marker-ring);
 }
+/* A drop-off site can win a match like anything else, and until this rule
+   existed the `winner` class was being set on it with nothing to show for it
+   -- the route line simply ended at a 14px hollow square. Same treatment as
+   .mk-agency.winner so the glyph still reads "receives only" while being
+   unmistakably the thing the line points at. */
+.mk-dropoff.winner {
+  animation: col-pop .5s ease 2;
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--c-agency) 95%, transparent),
+              0 0 20px color-mix(in srgb, var(--c-agency) 90%, transparent);
+}
 .lg-dropoff {
   width: 11px; height: 11px; border-radius: 3px; display: inline-block;
   background: var(--surface); border: 2px solid var(--c-agency);

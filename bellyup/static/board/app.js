@@ -473,7 +473,7 @@ let currentMatch = null;   // { supplier, result } for the confirm button
 function clearFx() {
   fxLayer.clearLayers();
   $("calcOverlay").classList.remove("show");
-  document.querySelectorAll(".mk-agency.winner, .mk-pantry.winner").forEach(el => el.classList.remove("winner"));
+  document.querySelectorAll(".mk-agency.winner, .mk-pantry.winner, .mk-dropoff.winner").forEach(el => el.classList.remove("winner"));
   document.querySelectorAll(".mk-supplier.selected").forEach(el => el.classList.remove("selected"));
   for (const id in hotspotMarkers) {
     const el = hotspotMarkers[id].getElement();
@@ -918,11 +918,17 @@ function renderLedger() {
         <span class="rt-when">${r.date} &middot; ${r.time}</span>
       </div>
       <div class="rt-flow"><b>${r.supplier}</b> <span class="rt-arrow">&rarr;</span>
-        ${r.kind === "pantry" ? "🚐" : "🚚"} ${agShort({ name: r.collector })}
-        <span class="rt-arrow">&rarr;</span> 📍 ${r.hotspot}</div>
+        ${r.kind === "pantry" ? "🚐" : r.kind === "dropoff" ? "🏢" : "🚚"} ${agShort({ name: r.collector })}
+        <span class="rt-arrow">&rarr;</span> ${r.kind === "dropoff"
+          ? "🏢 held on site for walk-ins" : `📍 ${r.hotspot}`}</div>
       <div class="rt-nums">
         <span><b>${r.lbs}</b> lbs donated</span>
-        <span><b>${r.servedMeals}</b> people fed</span>
+        ${/* A drop-off feeds nobody TONIGHT and the ledger must not claim it
+              did -- it stocked a shelf people come to. Reporting "0 people
+              fed" beside 288 lb reads as a failed run rather than a different
+              kind of one, so it says what actually happened instead. */""
+        }<span><b>${r.kind === "dropoff" ? r.surplusMeals : r.servedMeals}</b> ${
+          r.kind === "dropoff" ? "meals on the shelf" : "people fed"}</span>
         <span class="fmv">est. FMV <b>${fmt$(r.fmv)}</b></span>
         <span>net ${fmt$(r.net)}</span>
       </div>
@@ -945,7 +951,13 @@ function renderLedger() {
 
   /* hotspots served tonight */
   $("limitLabel").textContent = C.MAX_DROPS_PER_NIGHT;
-  const servedIds = [...new Set(tonight.map(r => r.hotspotId))];
+  /* A receipt with no hotspotId served no block: a drop-off run (the food is
+     held at the site for walk-ins) or a deferred one (it goes out on the next
+     run, so tonight's block capacity is untouched). Both belong in the donor
+     table above and in neither this list nor the counts feeding it -- and
+     looking them up here found `undefined` and took the whole ledger down. */
+  const servedIds = [...new Set(tonight.map(r => r.hotspotId))]
+    .filter(hid => hid && HOTSPOTS.some(x => x.id === hid));
   $("ledgerServed").innerHTML = servedIds.length ? servedIds.map(hid => {
     const h = HOTSPOTS.find(x => x.id === hid);
     const meals = servedMealsTonight(hid), drops = dropsTonight(hid);
@@ -1361,6 +1373,12 @@ function drawMatchRoute(s) {
   fxLayer.addLayer(L.circleMarker([s.lat, s.lon], {
     radius: 8, color: themeColor("--c-supplier"), weight: 3,
     fillOpacity: .9, interactive: false }));
+  /* Mark the collector end too. Drawing only the line left the donor to guess
+     which of the markers under it was the match -- worst for a fixed drop-off
+     site, whose glyph is a 14px square that reads as part of the line. Cleared
+     by clearFx before the next pick, and by buildLayers on any refresh. */
+  const colEl = $("col-" + c.id);
+  if (colEl) colEl.classList.add("winner");
   return c;
 }
 
@@ -1655,6 +1673,16 @@ function collectingList() {
     ...PANTRIES.filter(p => p.dispatchable)
       .map(p => ({ id: p.id, name: p.name, kind: "pantry",
                    sub: p.operator || "", lat: p.lat, lon: p.lon })),
+    /* Fixed drop-off sites, last so the default selection stays a food bank.
+       They were left off entirely, which meant a request the engine had
+       addressed to one -- Manchester Grand Hyatt to First Lutheran, say --
+       could be made by the donor and then accepted by nobody, because the
+       site it was addressed to had no board to accept it from. They cannot
+       run a distribution round; they can send someone for the food and hold
+       it for people who walk in. See dispatch.request_targets. */
+    ...AGENCIES.filter(a => a.mobileCapable === false)
+      .map(a => ({ id: a.id, name: a.name, kind: "dropoff",
+                   sub: a.program || "", lat: a.lat, lon: a.lon })),
   ];
 }
 
@@ -1679,10 +1707,11 @@ function renderAgencyList() {
     + list.map(a => `
       <div class="offer pick ${a.id === myAgency ? "on" : ""}" data-agency="${a.id}">
         <div class="offer-top">
-          <span>${a.kind === "agency" ? "🚚" : "🚐"}</span>
+          <span>${a.kind === "agency" ? "🚚" : a.kind === "pantry" ? "🚐" : "🏢"}</span>
           <span class="offer-name">${a.name}</span>
         </div>
-        <div class="offer-sub">${a.sub}${a.id === myAgency && offers.agency
+        <div class="offer-sub">${a.sub}${a.kind === "dropoff"
+          ? " · walk-in site, collects only" : ""}${a.id === myAgency && offers.agency
           ? ` · ${offers.agency.capacityLbs} lb capacity` : ""}</div>
       </div>`).join("");
   $("feed").querySelectorAll("[data-agency]").forEach(el =>
@@ -1829,6 +1858,11 @@ function renderPlan(planned) {
       &times; <b>Not feasible</b> &mdash; ${planned.reason}</div>`;
   }
   const isPantry = planned.collector.kind === "pantry";
+  /* A drop-off run has no second leg at all, so the delivery half of this
+     panel would otherwise read "Drop-offs, in order (0)" over an empty list
+     and "0 people fed" -- both true and both useless. What it actually does
+     is carry the food back to its own site for people who walk in. */
+  const isDropoff = planned.collector.kind === "dropoff";
   const pickupRows = planned.pickups.map((p, i) => `
     <div class="alt-row">
       <span class="alt-rank">${i + 1}.</span>
@@ -1845,11 +1879,11 @@ function renderPlan(planned) {
   return `
     <div class="rb-h">Pickups, in order (${planned.pickups.length})</div>
     ${pickupRows}
-    <div class="rb-h">Drop-offs, in order (${planned.stops.length})</div>
-    ${stopRows}
+    ${isDropoff ? "" : `<div class="rb-h">Drop-offs, in order (${planned.stops.length})</div>
+    ${stopRows}`}
 
     <div class="outcomes">
-      <div class="oc oc-people"><div class="v">${fmtInt(planned.servedMeals)}</div><div class="k">people fed</div></div>
+      <div class="oc oc-people"><div class="v">${fmtInt(isDropoff ? planned.leftoverMeals : planned.servedMeals)}</div><div class="k">${isDropoff ? "meals to the site" : "people fed"}</div></div>
       <div class="oc"><div class="v">${planned.miles.toFixed(1)}</div><div class="k">route miles</div></div>
       <div class="oc oc-net ${planned.net < 0 ? "neg" : ""}"><div class="v">${fmt$(planned.net)}</div><div class="k">net benefit</div></div>
     </div>
@@ -1865,7 +1899,11 @@ function renderPlan(planned) {
     ${planned.missedWindows.length ? `<div class="rb-note" style="border-color:var(--bad);">
       ⏱ <b>Missed pickup windows:</b> ${planned.missedWindows.join(", ")} &mdash; shown is the
       fewest-misses, then-shortest order available for this basket.</div>` : ""}
-    ${planned.leftoverMeals >= 1 ? `<div class="rb-note">🎯 Block need absorbs
+    ${isDropoff ? `<div class="rb-note">🏢 <b>Collection only.</b> ${agShort(planned.collector)}
+      has no distribution round — the crew brings ${fmtInt(planned.loadedLbs)} lb back to the
+      site and holds it for people who walk in. No block is credited, so this books
+      against nobody&rsquo;s nightly capacity.</div>`
+    : planned.leftoverMeals >= 1 ? `<div class="rb-note">🎯 Block need absorbs
       ${fmtInt(planned.servedMeals)} meals; <b>${fmtInt(planned.leftoverMeals)} meals</b> ride
       along to ${agShort(planned.collector)}&rsquo;s network.</div>` : ""}
 
