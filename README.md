@@ -39,7 +39,8 @@ the earlier three-role `/roles` prototype (`agencies.py`, `collection.py`,
 ## The landing page
 
 `/landing` is the public front door; the board keeps `/`, and every call to
-action on the page links to it. Plain HTML, one vendored design-system
+action on the page links to it. The board's **BellyUp mark is the way back** —
+it pointed at `/`, which was a link to the page you were already on. Plain HTML, one vendored design-system
 stylesheet plus one page stylesheet, and a small vanilla-JS block for the
 find-food panel — the same shape as `static/board/`, no framework and no build
 step. `blocks.json` is generated from `dataset/hotspots.csv` rather than
