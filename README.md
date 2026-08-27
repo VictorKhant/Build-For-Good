@@ -40,7 +40,15 @@ the earlier three-role `/roles` prototype (`agencies.py`, `collection.py`,
 
 `/landing` is the public front door; the board keeps `/`, and every call to
 action on the page links to it. The board's **BellyUp mark is the way back** —
-it pointed at `/`, which was a link to the page you were already on. Plain HTML, one vendored design-system
+it pointed at `/`, which was a link to the page you were already on.
+
+The page does not carry a find-food search. The handoff's design had one, but
+it was a mock-up: a fixed origin, an address field that changed nothing, and
+hand-set "open" flags rather than hours read against the clock. A search box
+that cannot answer is worse on a page aimed at someone who needs food tonight
+than no search box at all, so the page sends them to the board, which does it
+against live hours and routed distances. The map still draws the walk to the
+closest open pantry as an illustration of what the board does. Plain HTML, one vendored design-system
 stylesheet plus one page stylesheet, and a small vanilla-JS block for the
 find-food panel — the same shape as `static/board/`, no framework and no build
 step. `blocks.json` is generated from `dataset/hotspots.csv` rather than

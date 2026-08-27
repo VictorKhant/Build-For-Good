@@ -118,6 +118,12 @@
     "lon": -117.150283,
     "matched": "1501 IMPERIAL AVE, SAN DIEGO, CA, 92101"
   },
+  "15th & market st, san diego, ca": {
+    "lat": 32.711521,
+    "lon": -117.15036,
+    "matched": "15TH ST & MARKET ST, SAN DIEGO, CA, 92101",
+    "source": "census"
+  },
   "1607 grandon avenue, san marcos, ca 92078": {
     "lat": 33.134735,
     "lon": -117.204249,

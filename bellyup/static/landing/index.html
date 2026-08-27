@@ -24,7 +24,6 @@
   </div>
   <div class="nav-links">
     <a href="#how">How it works</a>
-    <a href="#find">Find food</a>
     <a href="#donate">For restaurants</a>
     <a class="btn btn-primary" href="/">Open the live board</a>
   </div>
@@ -44,7 +43,7 @@
       takes.</p>
     <div class="hero-actions">
       <a class="btn btn-primary btn-lg" href="/">Open the live board</a>
-      <a class="btn btn-ghost btn-lg" href="#find">Find food near you</a>
+      <a class="btn btn-ghost btn-lg" href="#how">How it works</a>
     </div>
     <p class="hero-foot muted-62">Downtown San Diego · 13 pantry sites · 382 blocks counted</p>
   </div>
@@ -121,50 +120,6 @@
   </div>
 </section>
 
-<!-- ────────────────────────────────────────────────────────── find food ── -->
-<section id="find" class="find">
-  <div class="wrap">
-    <p class="eyebrow">Find food</p>
-    <h2>Type where you are. The closest open pantry comes first.</h2>
-    <p class="find-lede muted-78">This view shows pantry locations only. Outreach blocks are
-      never shown here, and nobody has to give a name to look.</p>
-
-    <div class="find-panel">
-      <div>
-        <label class="find-label" for="whereInput">Where are you?</label>
-        <input class="input" id="whereInput" type="text"
-               placeholder="e.g. 16th &amp; Market, San Diego"
-               value="16th &amp; Market, San Diego">
-
-        <div class="ranges" role="group" aria-label="Search radius">
-          <button type="button" class="range-pill" data-range="2" aria-pressed="false">2 km</button>
-          <button type="button" class="range-pill" data-range="5" aria-pressed="true">5 km</button>
-          <button type="button" class="range-pill" data-range="10" aria-pressed="false">10 km</button>
-        </div>
-
-        <div class="closest">
-          <p class="closest-kicker">Closest open to you</p>
-          <p class="closest-name" id="closestName">&nbsp;</p>
-          <p class="closest-meta muted-78" id="closestMeta">&nbsp;</p>
-        </div>
-
-        <p class="find-note muted-62" id="findNote">Straight-line estimate. The live board
-          routes the same walk over the street network.</p>
-      </div>
-
-      <div class="results">
-        <div class="results-head">
-          <b id="resultsHeading">&nbsp;</b>
-          <span class="muted-62">ranked by distance</span>
-        </div>
-        <div id="resultsList"></div>
-        <p class="results-foot muted-62">Hours and eligibility as published on the San Diego
-          Food Bank EFAP roster and the city&rsquo;s distribution list.</p>
-      </div>
-    </div>
-  </div>
-</section>
-
 <!-- ─────────────────────────────────────────────────────── restaurants ── -->
 <section id="donate">
   <div class="wrap donate">
@@ -225,8 +180,11 @@
    BellyUp landing page.
 
    Plain vanilla JS, matching how bellyup/static/board is built: no
-   framework, no build step. Two jobs — project the map, and run the
-   find-food panel.
+   framework, no build step. One job now: project the map. The find-food
+   panel that used to live here was a mock-up -- a fixed origin, an address
+   field that changed nothing, and hand-set "open" flags. The board does it
+   for real, against live hours and routed distances, so this page points
+   there rather than showing a search that cannot answer.
    ═══════════════════════════════════════════════════════════════════ */
 
 /* Pantry sites: mobile_pantries.csv where downtown_relevant is true, plus the
@@ -263,17 +221,18 @@ const FALLBACK_BLOCKS = [
 
 const ORIGIN = { lat: 32.7109864, lon: -117.1499028, label: "16th & Market, San Diego" };
 
-const state = { blocks: FALLBACK_BLOCKS, range: 5 };
+const state = { blocks: FALLBACK_BLOCKS };
 
-/* Straight-line, times the same 1.3 road factor the board falls back to when
-   its router is unreachable. The board itself routes over real streets; this
-   page does not have a routed origin to work from, and the footnote says so. */
+/* Only the map uses this now: it draws the walk from the origin dot to the
+   closest open pantry. Straight-line times 1.3, which is the fallback the
+   board itself uses when its router is unreachable -- close enough to place a
+   dashed line on an illustration, and not offered to anyone as a real answer.
+   The board does the real thing, routed over streets. */
 function distKm(p) {
   const dy = (p.lat - ORIGIN.lat) * 111.32;
   const dx = (p.lon - ORIGIN.lon) * 111.32 * Math.cos(ORIGIN.lat * Math.PI / 180);
   return Math.hypot(dx, dy) * 1.3;
 }
-const walkMin = (km) => Math.round(km / 5 * 60);
 
 /* ─────────────────────────────────────────────────────────────── map ── */
 
@@ -334,58 +293,8 @@ function drawMap() {
      </svg>`;
 }
 
-/* ────────────────────────────────────────────────────────── find food ── */
-
-function renderFind() {
-  const esc = (t) => String(t).replace(/&/g, "&amp;").replace(/</g, "&lt;");
-  const listed = PANTRIES
-    .map(p => ({ ...p, d: distKm(p) }))
-    .filter(p => p.d <= state.range)
-    .sort((a, b) => a.d - b.d);
-
-  /* Closest OPEN, falling back to the closest of any -- someone who has to
-     walk deserves an address either way, with the hours to judge it by. */
-  const closest = listed.find(p => p.open) || listed[0];
-  document.getElementById("closestName").textContent =
-    closest ? closest.name : "Nothing open in range";
-  document.getElementById("closestMeta").textContent =
-    closest ? `${closest.hours} · ${closest.d.toFixed(1)} km · ${walkMin(closest.d)} min walk`
-            : "Try a wider range.";
-
-  /* The heading counts everything within range, not just the five shown. */
-  document.getElementById("resultsHeading").textContent =
-    `${listed.length} within ${state.range} km`;
-
-  document.getElementById("resultsList").innerHTML = listed.length
-    ? listed.slice(0, 5).map((p, i) => `
-      <div class="card result">
-        <div class="rank" style="background:${i === 0 ? "var(--color-accent-2-200)" : "var(--color-accent-100)"};
-                                 color:${i === 0 ? "var(--color-accent-2-800)" : "var(--color-accent-700)"}">${i + 1}</div>
-        <div>
-          <div class="result-name">${esc(p.name)}</div>
-          <div class="result-hours muted-72">${esc(p.hours)}</div>
-          <div class="result-note muted-62">${esc(p.note)}</div>
-        </div>
-        <div class="result-right">
-          <div class="result-dist">${p.d.toFixed(1)} km</div>
-          <div class="result-walk muted-62">${walkMin(p.d)} min walk</div>
-        </div>
-      </div>`).join("")
-    : `<p class="results-empty muted-72">Nothing within ${state.range} km. Try a wider range.</p>`;
-}
-
-document.querySelectorAll(".range-pill").forEach(btn => {
-  btn.addEventListener("click", () => {
-    state.range = Number(btn.dataset.range);
-    document.querySelectorAll(".range-pill").forEach(b =>
-      b.setAttribute("aria-pressed", String(b === btn)));
-    renderFind();          /* instant: no submit step to find a meal behind */
-  });
-});
-
 /* ──────────────────────────────────────────────────────────────── boot ── */
 
-renderFind();
 drawMap();
 
 fetch("/static/landing/blocks.json")

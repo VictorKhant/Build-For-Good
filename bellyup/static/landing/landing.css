@@ -200,106 +200,6 @@ section {
    wrap to one per row and the offset would read as a mistake. */
 .stat.drop { transform: translateY(26px); }
 
-/* ────────────────────────────────────────────────────────── find food ── */
-
-.find h2 {
-  font-size: clamp(30px, 3.4vw, 44px);
-  line-height: 1.14;
-  max-width: 26ch;
-  margin: 0 0 16px;
-}
-.find-lede { font-size: 16px; line-height: 28px; max-width: 54ch; margin: 0 0 clamp(24px, 3vw, 36px); }
-
-.find-panel {
-  border-radius: 56px;
-  background: var(--color-neutral-100);
-  box-shadow: var(--shadow-md);
-  padding: clamp(20px, 3vw, 36px);
-  display: grid;
-  grid-template-columns: minmax(0, 5fr) minmax(0, 7fr);
-  gap: clamp(20px, 3vw, 40px);
-}
-
-.find-label {
-  display: block;
-  font-size: 13px; font-weight: 600;
-  letter-spacing: 0.06em; text-transform: uppercase;
-  color: color-mix(in srgb, var(--color-text) 70%, transparent);
-  margin-bottom: 10px;
-}
-.ranges { display: flex; gap: 8px; margin: 16px 0 20px; flex-wrap: wrap; }
-.range-pill {
-  font: inherit;
-  font-size: 13px;
-  cursor: pointer;
-  border: none;
-  padding: 6px 16px;
-  border-radius: 999px;
-  background: transparent;
-  color: var(--color-accent);
-  border: 1px solid var(--color-accent);
-}
-.range-pill[aria-pressed="true"] {
-  background: var(--color-accent-200);
-}
-
-.closest {
-  padding: 20px;
-  border-radius: 28px;
-  background: var(--color-accent-2-100);
-}
-.closest-kicker {
-  font-size: 12px; font-weight: 600;
-  letter-spacing: 0.06em; text-transform: uppercase;
-  color: var(--color-accent-2-800);
-  margin: 0 0 8px;
-}
-.closest-name {
-  font-family: var(--font-heading); font-weight: 400;
-  font-size: 20px; line-height: 26px;
-  margin: 0 0 8px;
-}
-.closest-meta { font-size: 14.5px; line-height: 24px; margin: 0; }
-.find-note { font-size: 13px; line-height: 22px; margin: 16px 0 0; }
-
-.results { display: flex; flex-direction: column; gap: 12px; }
-.results-head {
-  display: flex; justify-content: space-between; align-items: baseline;
-  gap: 12px;
-}
-.results-head b {
-  font-family: var(--font-heading); font-weight: 400;
-  font-size: 18px; line-height: 24px;
-}
-.results-head span { font-size: 13px; }
-
-.result {
-  display: grid;
-  grid-template-columns: 40px minmax(0, 1fr) auto;
-  gap: 14px;
-  align-items: start;
-  padding: 16px 18px;
-}
-.rank {
-  width: 40px; height: 40px;
-  border-radius: 999px;
-  display: grid; place-content: center;
-  font-family: var(--font-heading); font-weight: 400;
-  font-size: 14px;
-}
-.result-name { font-size: 15.5px; line-height: 22px; font-weight: 600; }
-.result-hours { font-size: 14px; line-height: 22px; margin-top: 4px; }
-.result-note { font-size: 13.5px; line-height: 20px; margin-top: 6px; }
-.result-right { text-align: right; white-space: nowrap; }
-.result-dist {
-  font-family: var(--font-heading); font-weight: 400;
-  font-size: 17px; line-height: 22px;
-  color: var(--color-accent-700);
-}
-.result-walk { font-size: 13px; }
-.results-foot { font-size: 13px; line-height: 22px; margin: 4px 0 0; }
-.results-empty { font-size: 15px; line-height: 24px; padding: 8px 2px; }
-
 /* ─────────────────────────────────────────────────────── restaurants ── */
 
 .donate {
@@ -370,12 +270,10 @@ section {
    reflow on their own through auto-fit and flex-wrap. */
 @media (max-width: 900px) {
   .map-section,
-  .find-panel,
   .donate {
     grid-template-columns: minmax(0, 1fr);
   }
   .map-figure { border-radius: 36px; }
-  .find-panel { border-radius: 36px; }
   .receipt, .closing { border-radius: 36px; }
 }
 
@@ -386,6 +284,4 @@ section {
   /* One per row: the deliberate stagger now reads as a misalignment, so it goes. */
   .stat.drop { transform: none; }
   .stats { gap: 20px; }
-  .result { grid-template-columns: 34px minmax(0, 1fr); }
-  .result-right { grid-column: 2; text-align: left; margin-top: 6px; }
 }
