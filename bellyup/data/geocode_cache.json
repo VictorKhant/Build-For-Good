@@ -199,12 +199,6 @@
     "lon": -115.547728,
     "matched": "250 W ORANGE AVE, EL CENTRO, CA, 92243"
   },
-  "2701 ridge rd, berkeley, ca, 94709": {
-    "lat": 37.876497,
-    "lon": -122.257024,
-    "matched": "2701 RIDGE RD, BERKELEY, CA, 94709",
-    "source": "census"
-  },
   "299 17th street, san diego, ca": {
     "lat": 32.708314,
     "lon": -117.148474,
