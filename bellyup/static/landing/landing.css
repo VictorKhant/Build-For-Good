@@ -131,14 +131,39 @@ section { padding-top: clamp(32px, 5vw, 72px); padding-bottom: clamp(24px, 3vw, 
 .btn-ghost:hover { background: var(--surface-2); }
 .btn-lg { padding: 12px 22px; font-size: 15px; }
 
-.theme-btn {
-  width: 34px; height: 34px; flex: none;
-  border-radius: 10px; border: 1px solid var(--line);
-  background: var(--surface);
-  display: grid; place-items: center;
-  font-size: 15px; line-height: 1;
+/* The board's switch, so the same control means the same thing on both. */
+.theme-switch { display: inline-flex; align-items: center; cursor: pointer; }
+.theme-switch input { position: absolute; opacity: 0; width: 0; height: 0; pointer-events: none; }
+.ts-track {
+  position: relative;
+  width: 46px; height: 26px;
+  border-radius: 999px;
+  background: var(--surface-2);
+  border: 1px solid var(--line);
+  transition: background .18s ease, border-color .18s ease;
 }
-.theme-btn:hover { background: var(--surface-2); }
+.ts-knob {
+  position: absolute; top: 2px; left: 2px;
+  width: 20px; height: 20px;
+  border-radius: 50%;
+  background: var(--surface);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, .28);
+  display: grid; place-items: center;
+  font-size: 11px; line-height: 1;
+  transition: transform .18s ease;
+}
+.ts-knob::after { content: "\2600"; }
+.theme-switch input:checked + .ts-track { background: var(--c-agency); border-color: var(--c-agency); }
+.theme-switch input:checked + .ts-track .ts-knob { transform: translateX(20px); }
+.theme-switch input:checked + .ts-track .ts-knob::after { content: "\263D"; }
+.theme-switch:hover .ts-track { border-color: var(--c-agency); }
+.theme-switch input:focus-visible + .ts-track { outline: 2px solid var(--c-agency); outline-offset: 2px; }
+
+.sr-only {
+  position: absolute; width: 1px; height: 1px;
+  padding: 0; margin: -1px; overflow: hidden;
+  clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0;
+}
 
 /* -------------------------------------------------------------- hero -- */
 

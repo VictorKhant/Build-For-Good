@@ -34,7 +34,11 @@
     <a href="#how">How it works</a>
     <a href="#donate">For restaurants</a>
     <a class="btn btn-primary" href="/board">Open the live board</a>
-    <button class="theme-btn" id="themeBtn" type="button" aria-label="Switch theme"></button>
+    <label class="theme-switch" title="Light or dark">
+      <input type="checkbox" id="themeBtn" role="switch">
+      <span class="ts-track" aria-hidden="true"><span class="ts-knob"></span></span>
+      <span class="sr-only">Dark mode</span>
+    </label>
   </div>
 </nav>
 
@@ -320,12 +324,13 @@ function applyTheme() {
   if (theme === "dark") document.documentElement.setAttribute("data-theme", "dark");
   else document.documentElement.removeAttribute("data-theme");
   const b = document.getElementById("themeBtn");
-  b.textContent = theme === "dark" ? "☀️" : "🌙";
-  b.title = theme === "dark" ? "Switch to light mode" : "Switch to dark mode";
+  b.checked = theme === "dark";
+  b.closest(".theme-switch").title =
+    theme === "dark" ? "Switch to light mode" : "Switch to dark mode";
 }
 
-document.getElementById("themeBtn").addEventListener("click", () => {
-  theme = theme === "dark" ? "light" : "dark";
+document.getElementById("themeBtn").addEventListener("change", () => {
+  theme = document.getElementById("themeBtn").checked ? "dark" : "light";
   try { localStorage.setItem("bellyup.theme", theme); } catch (e) {}
   applyTheme();
   drawMap();          /* the SVG reads the tokens, so it has to be redrawn */

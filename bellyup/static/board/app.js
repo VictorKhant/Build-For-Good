@@ -132,7 +132,25 @@ const dispatchFor = s => api(`/api/board/dispatch/${s.id}`, { method: "POST" });
 const map = L.map("map", { zoomControl: true, attributionControl: true });
 const tiles = L.tileLayer(TILE_URLS[theme], {
   attribution: 'Tiles &copy; <a href="https://www.esri.com/">Esri</a> &mdash; Esri, HERE, Garmin, &copy; OpenStreetMap contributors',
-  maxZoom: 16,
+  /* Esri serves 256px tiles with no @2x variant, so on a HiDPI screen each one
+     was upscaled 2x and the map read soft. detectRetina fixes that by fetching
+     one zoom level DEEPER and drawing it at half size -- double the pixel
+     density with no retina URL needed.
+
+     It only works while a deeper tile EXISTS. This layer's data stops at z16:
+     past that the server still answers 200, with an identical 2.5KB "Map data
+     not yet available" placeholder at every zoom. So maxNativeZoom is pinned
+     to 15, and maxZoom left higher -- Leaflet then upscales rather than
+     fetching a grey placeholder. Zooming in goes soft, which is the honest
+     failure; it does not go blank.
+
+     Why 15 and not 16, when 16 is the last real level: detectRetina works by
+     adding 1 to the requested zoom, and it adds it AFTER maxNativeZoom has
+     been applied. A cap of 16 therefore still asks for 17 and gets the
+     placeholder back. The cap has to leave room for that +1. */
+  detectRetina: true,
+  maxNativeZoom: 15,
+  maxZoom: 19,
 }).addTo(map);
 
 const fxLayer = L.layerGroup().addTo(map);   // scan lines, routes, radar
@@ -1088,11 +1106,13 @@ $("resetBtn").addEventListener("click", async () => {
 
 /* ----------------------------------------------------------- theme toggle */
 function setThemeButton() {
-  $("themeBtn").textContent = theme === "dark" ? "☀️" : "🌙";
-  $("themeBtn").title = theme === "dark" ? "Switch to light mode" : "Switch to dark mode";
+  /* A switch, so it shows the state you are IN, not the one you would get. */
+  $("themeBtn").checked = theme === "dark";
+  $("themeBtn").closest(".theme-switch").title =
+    theme === "dark" ? "Switch to light mode" : "Switch to dark mode";
 }
-$("themeBtn").addEventListener("click", () => {
-  theme = theme === "dark" ? "light" : "dark";
+$("themeBtn").addEventListener("change", () => {
+  theme = $("themeBtn").checked ? "dark" : "light";
   try { localStorage.setItem("bellyup.theme", theme); } catch (e) { /* best effort */ }
   applyThemeAttr();
   setThemeButton();
@@ -2319,6 +2339,14 @@ function wireRoles() {
       hint.className = "reg-hint bad"; hint.textContent = err.message;
     }
   });
+}
+
+/* The legend is `open` in the markup so it is open without JS and on a
+   desktop. A phone screen cannot spare the room, so it starts shut there --
+   set once at boot, never again, so reopening it survives a resize. */
+if (window.matchMedia("(max-width: 760px)").matches) {
+  const lg = $("mapLegend");
+  if (lg) lg.open = false;
 }
 
 /* ------------------------------------------------------------------- boot */

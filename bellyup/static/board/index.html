@@ -35,7 +35,11 @@
     <button class="btn-ledger" id="ledgerBtn" title="Delivery ledger">
       Ledger <span class="ledger-count" id="ledgerCount">0</span>
     </button>
-    <button class="btn-theme" id="themeBtn" title="Light or dark">&#127769;</button>
+    <label class="theme-switch" title="Light or dark">
+      <input type="checkbox" id="themeBtn" role="switch">
+      <span class="ts-track" aria-hidden="true"><span class="ts-knob"></span></span>
+      <span class="sr-only">Dark mode</span>
+    </label>
   </div>
 </header>
 
@@ -141,7 +145,11 @@
   <section class="map-wrap">
     <div id="map"></div>
 
-    <div class="map-legend">
+    <!-- A <details>, not a scripted panel: the open/closed state, the keyboard
+         behaviour and the ARIA all come free, and it still works if the JS
+         above it throws. Open on a desktop, shut on a phone (see the CSS). -->
+    <details class="map-legend" id="mapLegend" open>
+      <summary class="lg-summary">Legend</summary>
       <div class="lg-row"><span class="lg-hotspot"></span> Only significant clusters shown (Gi*, p&lt;0.05) &middot; size = need</div>
       <div class="lg-row"><span class="lg-hotspot lg-cluster lg-emerging"></span> Emerging cluster &middot; growing (predicted from trend)</div>
       <div class="lg-row"><span class="lg-hotspot lg-cluster lg-cooling"></span> Cooling cluster &middot; declining from its peak</div>
@@ -153,7 +161,7 @@
       <div class="lg-row"><span class="lg-dropoff"></span> Fixed drop-off site (receives only)</div>
       <div class="lg-row"><span class="lg-pantry"></span> Mobile pantry &middot; unit available tonight</div>
       <div class="lg-row"><span class="lg-pantry lg-pantry-idle"></span> Mobile pantry &middot; no unit tonight</div>
-    </div>
+    </details>
 
     <div class="calc-overlay" id="calcOverlay">
       <div class="calc-title" id="calcTitle">TRIANGULATING</div>

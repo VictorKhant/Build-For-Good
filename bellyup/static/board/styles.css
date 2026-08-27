@@ -123,15 +123,43 @@ button { font: inherit; color: inherit; cursor: pointer; }
   font-variant-numeric: tabular-nums;
   text-align: center;
 }
-.btn-theme {
-  width: 38px; height: 38px;
-  border-radius: 9px;
+/* Light/dark as a switch rather than a button. A button showed the moon you
+   would GET; people read it as the state they were IN. A slider has a
+   position, so there is nothing to misread. */
+.theme-switch { display: inline-flex; align-items: center; cursor: pointer; }
+.theme-switch input {
+  position: absolute; opacity: 0; width: 0; height: 0; pointer-events: none;
+}
+.ts-track {
+  position: relative;
+  width: 46px; height: 26px;
+  border-radius: 999px;
   background: var(--surface-2);
   border: 1px solid var(--line);
-  font-size: 16px;
-  display: grid; place-items: center;
+  transition: background .18s ease, border-color .18s ease;
 }
-.btn-theme:hover { border-color: var(--c-agency); }
+.ts-knob {
+  position: absolute; top: 2px; left: 2px;
+  width: 20px; height: 20px;
+  border-radius: 50%;
+  background: var(--surface);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, .28);
+  display: grid; place-items: center;
+  font-size: 11px; line-height: 1;
+  transition: transform .18s ease;
+}
+.ts-knob::after { content: "\2600"; }               /* sun */
+.theme-switch input:checked + .ts-track { background: var(--c-agency); border-color: var(--c-agency); }
+.theme-switch input:checked + .ts-track .ts-knob { transform: translateX(20px); }
+.theme-switch input:checked + .ts-track .ts-knob::after { content: "\263D"; }   /* moon */
+.theme-switch:hover .ts-track { border-color: var(--c-agency); }
+.theme-switch input:focus-visible + .ts-track { outline: 2px solid var(--c-agency); outline-offset: 2px; }
+
+.sr-only {
+  position: absolute; width: 1px; height: 1px;
+  padding: 0; margin: -1px; overflow: hidden;
+  clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0;
+}
 
 
 /* ================================ layout =============================== */
@@ -214,18 +242,47 @@ button { font: inherit; color: inherit; cursor: pointer; }
 #map { position: absolute; inset: 0; background: var(--bg); }
 .leaflet-container { font-family: system-ui, -apple-system, "Segoe UI", sans-serif; }
 
+/* The legend covered a quarter of the map and every reader had already
+   learned it by the second dispatch. It is now a <details>: a small chip
+   until you want it, the full key when you do. Shut, it is 88px wide. */
 .map-legend {
   position: absolute;
   left: 14px; bottom: 14px;
   z-index: 800;
+  max-width: min(330px, calc(100% - 28px));
   background: color-mix(in srgb, var(--surface) 92%, transparent);
   border: 1px solid var(--line);
   border-radius: 11px;
-  padding: 10px 13px;
-  font-size: 11.5px;
+  padding: 6px 10px;
+  font-size: 11px;
+  line-height: 1.45;
   color: var(--ink-2);
   backdrop-filter: blur(4px);
 }
+.map-legend[open] { padding-bottom: 9px; }
+.lg-summary {
+  cursor: pointer;
+  list-style: none;
+  font-size: 10.5px; font-weight: 600;
+  letter-spacing: .07em; text-transform: uppercase;
+  color: var(--muted);
+  display: flex; align-items: center; gap: 6px;
+  padding: 2px 0;
+  user-select: none;
+}
+.lg-summary::-webkit-details-marker { display: none; }
+/* a caret that turns, rather than the platform triangle */
+.lg-summary::before {
+  content: "";
+  width: 0; height: 0;
+  border-left: 4px solid currentColor;
+  border-top: 3.5px solid transparent;
+  border-bottom: 3.5px solid transparent;
+  transition: transform .15s ease;
+}
+.map-legend[open] .lg-summary::before { transform: rotate(90deg); }
+.lg-summary:hover { color: var(--ink); }
+.map-legend[open] .lg-summary { margin-bottom: 6px; }
 .lg-row { display: flex; align-items: center; gap: 8px; margin: 3px 0; }
 .lg-hotspot {
   width: 13px; height: 13px; border-radius: 50%;
@@ -1276,4 +1333,72 @@ body.ledger-open { overflow: hidden; }
 .tag-open {
   color: var(--muted);
   background: color-mix(in srgb, var(--muted) 16%, transparent);
+}
+
+/* ---------------------------------------------------------------- phones --
+   Below 760px the desktop bar stops working, for two structural reasons.
+
+   The nav is absolutely centred on the WINDOW -- deliberately, so switching
+   role cannot shift it (see the note above .topbar). On a phone the window is
+   narrower than brand + nav + controls, so the nav lands on top of the brand
+   and the right-hand controls are pushed off the edge entirely.
+
+   And the legend is pinned over the map. On a desktop it covers a corner; at
+   this width it covers the map.
+
+   So the bar returns to normal flow and wraps onto two rows, and the legend
+   becomes a detail the reader opens. Nothing is hidden that carried meaning --
+   the legend is still reachable, the ledger is still a button. */
+@media (max-width: 760px) {
+  .topbar {
+    height: auto;
+    flex-wrap: wrap;
+    row-gap: 10px;
+    padding: 10px 12px;
+  }
+  .roleswitch {
+    position: static;
+    transform: none;
+    order: 3;
+    width: 100%;
+    justify-content: center;
+  }
+  .roleswitch button { flex: 1; white-space: nowrap; }
+  .topright { gap: 8px; }
+  .brand-name { display: none; }   /* the mark still says BellyUp, and links home */
+
+  /* A grid item's default min-width is auto, so the widest child -- a long
+     restaurant name, the register button -- sets the track width and pushes
+     the whole page wider than the screen. Measured: 518px of layout in a
+     384px viewport. */
+  .layout { height: auto; }
+  .layout > * { min-width: 0; }
+  .feed, .panel { min-width: 0; max-width: 100vw; }
+  .feed-head h2, .offer-name { overflow-wrap: anywhere; }
+
+  /* Map first. Stacked in DOM order the feed is ~2,800px of restaurant cards
+     and the map lands at y=2943 -- you would scroll past every restaurant in
+     the city before seeing where any of them are. The map is the thing that
+     makes the list mean something, so it goes on top and the list reads
+     underneath it. */
+  .map-wrap { order: -1; height: 46vh; }
+  .feed { max-height: none; order: 0; }
+  .panel { order: 1; }
+
+  /* and the bar stays reachable, so switching role never means scrolling up */
+  .topbar { position: sticky; top: 0; }
+
+  /* The legend starts shut here -- open, it is most of a phone screen. */
+  .map-legend {
+    left: 8px; bottom: 8px;
+    max-width: calc(100% - 16px);
+    max-height: 46%;
+    overflow-y: auto;
+  }
+}
+
+@media (max-width: 420px) {
+  .roleswitch button { padding-inline: 8px; font-size: 12px; }
+  .btn-ledger { padding: 6px 9px; font-size: 12px; }
+  .map-wrap { height: 56vh; }
 }
