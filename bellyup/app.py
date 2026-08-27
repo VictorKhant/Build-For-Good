@@ -16,7 +16,7 @@ from datetime import datetime, timedelta
 from pathlib import Path
 
 from fastapi import FastAPI, HTTPException, Query
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, HTMLResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
@@ -25,6 +25,7 @@ import demo_data
 import dispatch
 import geocode as geo
 import registry
+import routing
 
 HERE = Path(__file__).resolve().parent
 DATA = HERE / "data"
@@ -291,7 +292,7 @@ def dispatch_supplier(supplier_id: str):
     s = _find_supplier(supplier_id)
     result = dispatch.compute(s, b["agencies"], b["pantries"], b["hotspots"],
                               board_now())
-    out = dispatch.serialisable(result)
+    out = dispatch.serialisable(result, supplier=s)
     out["supplier"] = s
     out["served"] = dispatch.LEDGER.snapshot()
     return out
@@ -572,16 +573,18 @@ def decline_offer(agency_id: str, supplier_id: str):
             "declinedBy": [_target_name(x) for x in rec["declined_by"]]}
 
 
-@app.get("/api/board/agency/{agency_id}/offers")
-def agency_offers(agency_id: str):
-    """Reports this agency could take, and the ones it already has."""
-    b = board()
-    col = next((c for c in dispatch.request_targets(b["agencies"], b["pantries"])
-                if c["id"] == agency_id), None)
-    if col is None:
-        raise HTTPException(404, "no such collecting agency")
+def _on_board_for(b: dict, agency_id: str) -> list[tuple[dict, str]]:
+    """(report, status) pairs that belong on one collector's board.
 
-    offers, mine = [], []
+    Pulled out so the offer list and the unread-style badge on the collector
+    list cannot disagree. A badge that says 3 over a board showing 2 is worse
+    than no badge -- it sends someone to look for work that is not there.
+
+    Deliberately does no scoring: whether a run is viable does not change
+    whether the offer is ON the board, and computing it for 13 collectors to
+    draw 13 numbers would cost 13 full dispatch passes.
+    """
+    out = []
     for s in b["suppliers"]:
         if not s["report"]:
             continue
@@ -600,7 +603,39 @@ def agency_offers(agency_id: str):
         holder = claims_mod.CLAIMS.holder(s["id"])
         if holder and holder != agency_id:
             continue          # somebody else already took it
+        out.append((s, st))
+    return out
 
+
+@app.get("/api/board/agency/offer-counts")
+def agency_offer_counts():
+    """What is waiting on every collector's board, in one call.
+
+    The collector list needs a number per collector; asking the offers
+    endpoint once per collector would be 13 requests and 13 dispatch passes to
+    render a sidebar.
+    """
+    b = board()
+    out = {}
+    for col in dispatch.request_targets(b["agencies"], b["pantries"]):
+        rows = _on_board_for(b, col["id"])
+        waiting = sum(1 for _, st in rows if st != "accepted")
+        out[col["id"]] = {"waiting": waiting,
+                          "accepted": len(rows) - waiting}
+    return out
+
+
+@app.get("/api/board/agency/{agency_id}/offers")
+def agency_offers(agency_id: str):
+    """Reports this agency could take, and the ones it already has."""
+    b = board()
+    col = next((c for c in dispatch.request_targets(b["agencies"], b["pantries"])
+                if c["id"] == agency_id), None)
+    if col is None:
+        raise HTTPException(404, "no such collecting agency")
+
+    offers, mine = [], []
+    for s, st in _on_board_for(b, agency_id):
         r = dispatch.compute(s, b["agencies"], b["pantries"], b["hotspots"],
                              board_now())
         best = next((p for p in r["pairs"] if p["collector"]["id"] == agency_id), None)
@@ -778,16 +813,54 @@ def board_pantries(lat: float | None = None, lon: float | None = None,
                     "address": a.get("address", ""), "phone": a.get("phone", "")})
 
     if lat is not None and lon is not None:
+        # A walk is measured along streets like everything else. Someone
+        # deciding whether to set out deserves the distance they will cover,
+        # not the diagonal a bird would take through the middle of a block.
+        me = {"lat": lat, "lon": lon}
+        routing.warm([me, *out])
         for r in out:
-            km = haversine_km(lat, lon, r["lat"], r["lon"])
+            km = routing.walk_mi(me, r) * 1.609344
             r["distanceKm"] = round(km, 2)
             r["walkMinutes"] = round(km / 5.0 * 60)
+            r["routed"] = routing.is_routed(me, r)
         out = [r for r in out if r["distanceKm"] <= max_km]
         out.sort(key=lambda r: (not r["openTonight"], r["distanceKm"]))
 
     return {"view": "public", "count": len(out), "pantries": out,
             "openNow": sum(1 for r in out if r["openTonight"]),
             "note": "Pantry locations only. Outreach locations are never shown here."}
+
+
+@app.get("/api/route")
+def route(points: str, mode: str = "drive"):
+    """Street geometry through a list of `lat,lon;lat,lon;...` waypoints.
+
+    The board asks for this when it needs a line drawn that no dispatch
+    computed -- the walk from where someone is standing to the nearest open
+    pantry, for instance. It carries no need data and no hotspot, so it is
+    safe on the public view.
+    """
+    pts = []
+    for chunk in points.split(";"):
+        try:
+            a, b = chunk.split(",")
+            pts.append({"lat": float(a), "lon": float(b)})
+        except ValueError:
+            raise HTTPException(400, f"Bad waypoint '{chunk}', expected lat,lon")
+    if not 2 <= len(pts) <= 12:
+        raise HTTPException(400, "Give between 2 and 12 waypoints.")
+    return routing.path(pts, profile=(routing.WALK_PROFILE if mode == "walk"
+                                      else None))
+
+
+@app.get("/api/routing")
+def routing_status():
+    """Which engine answered, and how much of it was actually routed.
+
+    Surfaced because a straight-line estimate and a routed distance should
+    never be indistinguishable to whoever is deciding to send a truck.
+    """
+    return routing.status()
 
 
 @app.get("/api/geocode")
@@ -800,9 +873,58 @@ def geocode(address: str = Query(..., min_length=3)):
     return hit
 
 
-app.mount("/static", StaticFiles(directory=HERE / "static"), name="static")
+class RevalidatingStatics(StaticFiles):
+    """Serve the board's own JS and CSS with `Cache-Control: no-cache`.
+
+    StaticFiles sets no Cache-Control at all, so a browser applies heuristic
+    freshness and will happily reuse app.js and styles.css from memory without
+    ever asking whether they changed. Editing the board and reloading then
+    shows the OLD file -- which is not a slow demo, it is a demo of code that
+    is not running, and it wastes the time of whoever is trying to work out
+    why their change did nothing.
+
+    `no-cache` does not mean "do not cache". It means "revalidate before
+    using", so the ETag StaticFiles already sends turns an unchanged file into
+    a 304 with no body. Correctness on every reload, at the cost of one
+    conditional request per asset.
+    """
+
+    def file_response(self, *args, **kwargs):
+        resp = super().file_response(*args, **kwargs)
+        resp.headers["Cache-Control"] = "no-cache"
+        return resp
+
+
+app.mount("/static", RevalidatingStatics(directory=HERE / "static"), name="static")
 
 
 @app.get("/")
 def index():
-    return FileResponse(HERE / "static" / "board" / "index.html")
+    return HTMLResponse(_board_html(), headers={"Cache-Control": "no-cache"})
+
+
+BOARD_DIR = HERE / "static" / "board"
+
+
+def _board_html() -> str:
+    """index.html with its own JS and CSS stamped by modification time.
+
+    `Cache-Control: no-cache` on the assets fixes the NEXT reload, not this
+    one: a browser that already holds a heuristically-cached app.js will reuse
+    it without asking, so it never sees the header telling it to ask. Editing
+    the board and reloading then shows code that is not running, which is a
+    genuinely expensive thing to debug.
+
+    Stamping the URL removes the question. A changed file is a different URL
+    and must be fetched; an unchanged one keeps its URL and stays cached. The
+    page itself is never cached, so the stamps always propagate.
+    """
+    html = (BOARD_DIR / "index.html").read_text()
+    for asset in ("styles.css", "app.js"):
+        try:
+            stamp = int((BOARD_DIR / asset).stat().st_mtime)
+        except OSError:
+            continue
+        html = html.replace(f"/static/board/{asset}",
+                            f"/static/board/{asset}?v={stamp}")
+    return html

@@ -107,6 +107,13 @@ CONSTANTS = {
     "PANTRY_CAPACITY_LBS": 150,   # pantry van / mobile unit
     "DEMO_DATE": "2026-08-20",    # the fixed demo evening (a 3rd Thursday)
     "MAX_DROPS_PER_NIGHT": 2,     # serving limit: deliveries per hotspot per night
+    # What one report's worth of crowding is worth, in dollars of net value.
+    # The dial on the batched assignment: 0 sends every report to its best
+    # collector and leaves most boards empty; large numbers force an even
+    # split the food's constraints cannot support. 15 holds tonight's spread
+    # while recovering the value the greedy pass was giving away. See
+    # dispatch.assign_targets.
+    "ASSIGN_LOAD_PENALTY": 15.0,
     "DROPOFF_CREDIT": 0.5,        # value of stocking a pantry vs feeding a block tonight
 
     # --- added by the merge: the donor now states expiry and a pickup window,
@@ -572,8 +579,6 @@ def load_history(suppliers=None, agencies=None, pantries=None,
     reports. Gives the ledger view something to sit on: a platform with no
     yesterday looks like a prototype.
     """
-    import math
-
     suppliers = suppliers if suppliers is not None else load_suppliers()
     agencies = agencies if agencies is not None else load_agencies()
     pantries = pantries if pantries is not None else load_pantries()
@@ -582,13 +587,11 @@ def load_history(suppliers=None, agencies=None, pantries=None,
     C = CONSTANTS
     rng = random.Random(SEED + 7)
 
-    def road_mi(a, b):
-        rad = math.pi / 180
-        dlat = (b["lat"] - a["lat"]) * rad
-        dlon = (b["lon"] - a["lon"]) * rad
-        x = (math.sin(dlat / 2) ** 2 + math.cos(a["lat"] * rad)
-             * math.cos(b["lat"] * rad) * math.sin(dlon / 2) ** 2)
-        return 2 * 3958.76 * math.asin(math.sqrt(x)) * C["ROAD_FACTOR"]
+    # Same road graph tonight's dispatches are costed on. A receipt from last
+    # Tuesday and one from this evening have to be comparable, and they would
+    # not be if the history were straight-line and the live engine routed.
+    import routing as _routing
+    road_mi = _routing.mi
 
     hist_lbs = {"grocery": (120, 420), "hotel": (30, 160),
                 "venue": (180, 600), "health": (60, 180),

@@ -38,8 +38,15 @@ the earlier three-role `/roles` prototype (`agencies.py`, `collection.py`,
 
 ## Three views, one board
 
-A role switcher in the header. What each role may see is enforced on the
-server, not just hidden in the UI — a business asking for `/api/board/business`
+A role switcher in the header. **Business is where a first-time visitor
+lands** — a restaurant with surplus is the one role that can arrive cold and do
+something, and it is the side of the platform that has to be sold; the other
+two are for people who already know why they are here. After that the board
+remembers the view you were last in, so clearing the evening from the ledger
+(which reloads the page) does not also throw you out of the view you were
+working in.
+
+What each role may see is enforced on the server, not just hidden in the UI — a business asking for `/api/board/business`
 is never sent a hotspot, and neither is the public view.
 
 The left panel always answers *which one of these am I looking at*; the right
@@ -51,7 +58,10 @@ estimated deduction. The map draws that one line, agency to restaurant, and
 nothing else. Never a hotspot. A donor offers food; it does not assign anyone's
 van.
 
-**Agency** — the left lists the collectors; pick which one you are. Everything
+**Agency** — the left lists the collectors, each with a badge counting the
+requests **waiting for an answer** on its board; a collector with nothing
+waiting but work already accepted shows a tick instead, so "done" and "empty"
+do not look alike. Pick which one you are. Everything
 offered to you appears on the right, where you **build a run**: add offers and
 the optimal route previews as you go, or take a single job with *Accept just
 this*. Adding is free — only accepting books anything.
@@ -61,6 +71,30 @@ under it. Every option within range is listed on the right, ranked by distance,
 and the map draws the way from where you are to the nearest one. Pantry
 locations only.
 
+### Distances are streets, not straight lines
+
+Every distance the engine costs and every line the map draws comes from the
+real road graph — OSRM over OpenStreetMap, the same class of engine behind a
+rideshare ETA. A route follows Market Street; it does not cut the corner
+through the Convention Center.
+
+This is not cosmetic. Against a flat *haversine × 1.3*, real road distance over
+the 480 live collector→block pairs runs **1.34× median, 1.50× at p90, 4.34× at
+worst** — and **65% of pairs were understated** by the flat factor. The runs it
+understated most are exactly the ones a dispatcher would most want to refuse.
+Time is per-leg too, at the speed of the streets involved, because 30 freeway
+miles out to a north-county depot is not 30 miles of Gaslamp at one average.
+
+The road matrix for every fixed point — 263 of them, 69,169 ordered pairs — is
+precomputed into `data/road_matrix.npz` and shipped with the app, so a lookup
+is an array index and a dispatch that scores 56,000 pairs stays instant and
+works with the router unreachable. Distances are **directed**: Front and First
+are a one-way pair, and d(a→b) ≠ d(b→a) downtown. A restaurant that registers
+mid-session is not in the matrix, so its row is fetched live in a few bulk
+calls. If the router cannot be reached at all, the old straight-line estimate
+is returned, **labelled as an estimate** — `/api/routing` reports which
+answered. A degraded number that admits it beats a confident wrong one.
+
 ### Combining trips
 
 Pickup order is solved exactly — every permutation, so there is no heuristic to
@@ -68,19 +102,28 @@ defend — and constrained by each donor's window: the shortest order is not
 automatically a legal one, and a route reaching a loading dock after it closes
 is not a route. Feasible orders win outright; among them, the shortest.
 
-Deliveries are then assigned greedily by need-weighted value per mile of
-detour, up to what each block can still absorb tonight.
+**Which** blocks get the food is a value question, answered greedily: each
+block earns its place on need-weighted meals per mile of detour, up to what it
+can still absorb tonight. **What order** they are visited in is a distance
+question, and greedy answers it badly — taking the best next block each time is
+exactly how a route ends up crossing itself, driving out to a block, back past
+the last one, and out again. So the chosen set is re-ordered exhaustively over
+the tour *last pickup → blocks → base*: 6 orderings at three stops, 24 at four.
+Over 24 live multi-stop runs that is shorter on **21 of them, 6.2% off the
+total delivery tour** — and the order now depends on where the vehicle came
+from and where it goes home, so a collector approaching from the south visits
+the same three blocks in the opposite order to one coming from the north.
 
 A vehicle is filled smallest-first, so a 150 lb van takes as many donors as it
 can rather than being blocked by one pallet it cannot lift; the last one aboard
 may be a **partial** take. Anything that will not fit stays on offer and is
 named.
 
-Three grocery pickups on one truck: **35.8 mi, $142.07 — against $313.49 run
-separately, saving $171.42.**
+Three grocery pickups on one truck: **36.1 mi, $103.67 — against $203.89 run
+separately, saving $100.22.**
 
-**Empty miles are reported separately.** That same run is 7.2 mi carrying food
-and **28.5 mi empty** to and from a depot 19 km north — 80% deadhead. The plan
+**Empty miles are reported separately.** That same run is 3.9 mi carrying food
+and **32.2 mi empty** to and from a depot 19 km north — 89% deadhead. The plan
 says so, and the map draws those legs faint so they cannot be mistaken for the
 working route. A depot that far out spends most of its miles empty, and a
 closer collector will usually beat it.
@@ -131,11 +174,34 @@ reported  ──request──▶  requested  ──accept──▶  accepted  �
 **Requests are addressed, not broadcast.** The engine matches one collector and
 the request goes to that collector alone. Twenty-four reports fanned out to
 everyone would be a noticeboard; each agency instead gets around three offers it
-is actually expected to answer. Assignment is least-loaded-first with best net
-value as the tie-break, so the spread is even without being uniform — a
-prepared-food report only has three collectors that accept prepared food, and
-forcing an exact split would send food to whoever was next in line rather than
-to whoever should have it.
+is actually expected to answer.
+
+**The whole evening is assigned at once, not report by report.** Deciding each
+report in turn — least-loaded collector first, value as a tie-break — is the
+shape early rideshare dispatch had, and it fails the same way: a report decided
+early takes the collector a later report needed more, and nothing downstream can
+undo it. On tonight's board that greedy pass gave up **$345 of net value and
+drove no fewer miles at the same spread** — the imbalance was not buying the
+balance it cost.
+
+So the full report × collector matrix is solved as one optimal bipartite
+matching (`scipy.optimize.linear_sum_assignment`, ~0.3 ms at 24 × 13). Balance
+enters as a **convex penalty** rather than a hard first key: a collector's
+second report costs `ASSIGN_LOAD_PENALTY` of net value, its third twice that.
+The solver spends imbalance only where it is cheap, instead of treating one
+idle collector as worth any detour at all. The dial has a plain meaning — what
+one report's worth of crowding is worth in dollars — and at 15 it holds the
+spread the greedy pass produced while recovering the value it was throwing away.
+
+There is no fixed per-agency cap, because a cap cannot be honoured: a
+prepared-food report only has three collectors that accept prepared food at all,
+so eight reports have exactly one viable collector. The penalty bends where a
+cap would break.
+
+The panel a donor sees names the **matched** collector, not the "best" one, and
+says where it ranks and by how much — because the highest-scoring collector is
+not always the one asked, and hiding that made the engine look wrong rather than
+deliberate.
 
 **What a decline means is the donor's choice**, made with a checkbox when they
 request:
@@ -428,6 +494,8 @@ bellyup/
   claims.py         request lifecycle: who was asked, who said no
   registry.py       persistence: registrations, reports, opt-outs
   geocode.py        address → coordinates (Census, then Nominatim)
+  routing.py        street distances + drawn geometry (OSRM), matrix + fallback
+  build_road_cache.py   one-off: builds data/road_matrix.npz, then commit it
   spatial.py        Getis-Ord Gi* — is a block's need a real cluster
   area_forecast.py  neighbourhood-level trend regression, p-value gated
   static/board/     the dispatch board UI
@@ -454,7 +522,11 @@ which reads the same real `dataset/*.csv` files.
 | Meal value | $4.25 | Demo assumption |
 | FMV of donated food | $1.79/lb | Demo assumption, for the deduction estimate |
 
-Distances are straight-line × 1.3 at 18 mph — fine for triage, not dispatch.
+Distances and drive times are routed over the real street network (OSRM /
+OpenStreetMap), not straight-line estimates. `ROAD_FACTOR` (1.3) and
+`AVG_SPEED_MPH` (18) survive only as the fallback used when the router cannot
+be reached, and any distance answered that way is flagged rather than
+presented as routed.
 
 ---
 
@@ -467,6 +539,15 @@ Distances are straight-line × 1.3 at 18 mph — fine for triage, not dispatch.
   visibility as much as prevalence.
 - Two agencies have hand-placed coordinates; A.B. Jones & Co. has no fixed site
   and cannot anchor a cost model, so it is excluded.
+- Routing is real but the router is the public OSRM demo server, which asks not
+  to be leaned on and carries no SLA. Point `OSRM_URL` at a self-hosted
+  instance for anything beyond a demo. The precomputed matrix means an outage
+  degrades the board to straight-line estimates rather than breaking it.
+- The walk to a pantry is measured on the car graph, since the public server
+  carries no pedestrian profile. It takes the shorter of the two directions so
+  a one-way street does not add a lap of the building to someone's walk, but a
+  real sidewalk graph would be better; set `OSRM_WALK_PROFILE` against an OSRM
+  that has one.
 - Registrations and reports persist to CSV, not a database. Fine for a demo,
   not concurrent-safe under real load.
 - **Gi\* cluster significance is not the same claim as "validated need."** It

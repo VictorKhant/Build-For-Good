@@ -58,6 +58,9 @@ function haversineMi(a, b) {
     Math.cos(a.lat * rad) * Math.cos(b.lat * rad) * Math.sin(dLon / 2) ** 2;
   return 2 * R * Math.asin(Math.sqrt(s));
 }
+/* Last-resort only. Every distance the donor is SHOWN comes from the server's
+   road graph; this exists so a panel can still render a number if that has not
+   arrived yet, and anything measured this way says so. */
 const roadMi = (a, b) => haversineMi(a, b) * C.ROAD_FACTOR;
 
 /* ------------------------------------------------------------------ theme */
@@ -126,6 +129,79 @@ const tiles = L.tileLayer(TILE_URLS[theme], {
 }).addTo(map);
 
 const fxLayer = L.layerGroup().addTo(map);   // scan lines, routes, radar
+
+/* ---------------------------------------------------------------------------
+   Street geometry.
+
+   Every line that claims to be a ROUTE follows the road graph: the server
+   hands back the coordinates OSRM would drive, and we draw those. A straight
+   line between two markers is a claim about distance the map cannot support --
+   it crosses the Convention Center, it ignores that Front and First are a
+   one-way pair, and it makes a 7-mile detour look like a 1-mile hop.
+
+   The scan flicks during TRIANGULATING stay straight on purpose. They are a
+   radar sweep, not directions -- nobody is meant to drive one.
+
+   If the router is unreachable the server returns the straight-line legs it
+   always used, flagged `routed: false`, and the board draws those instead of
+   drawing nothing. A degraded line beats a blank map.
+--------------------------------------------------------------------------- */
+const routeCache = new Map();
+
+function routeKey(points, mode) {
+  const pts = points.filter(Boolean).map(p => [+p.lat, +p.lon]);
+  if (pts.length < 2) return null;
+  return mode + "|" + pts.map(([a, b]) => a.toFixed(5) + "," + b.toFixed(5)).join(";");
+}
+
+/* Already fetched? Lets a caller draw the real route in its first frame
+   instead of drawing a straight line and correcting itself. */
+function routeCached(points, mode = "drive") {
+  const k = routeKey(points, mode);
+  return k ? routeCache.get(k) || null : null;
+}
+
+async function streetRoute(points, mode = "drive") {
+  const pts = points.filter(Boolean).map(p => [+p.lat, +p.lon]);
+  if (pts.length < 2) return null;
+  const key = pts.map(([a, b]) => a.toFixed(5) + "," + b.toFixed(5)).join(";");
+  const ck = mode + "|" + key;
+  if (routeCache.has(ck)) return routeCache.get(ck);
+  try {
+    const r = await fetch("/api/route?mode=" + mode
+                          + "&points=" + encodeURIComponent(key));
+    if (!r.ok) throw new Error(r.status);
+    const g = await r.json();
+    routeCache.set(ck, g);
+    return g;
+  } catch (e) {
+    return null;      // caller falls back to a straight line
+  }
+}
+
+/* Draw one leg of a route: real geometry when we have it, the corner-to-corner
+   line when we do not. Same styling either way, so the caller does not branch. */
+function routeLine(coords, style) {
+  return L.polyline(coords, { interactive: false, ...style });
+}
+
+/* Draw a whole geometry, colouring legs by phase.
+   `phases` is [[legCount, style], ...] -- e.g. collection then delivery. */
+function drawGeometry(geom, phases, fallback) {
+  const legs = geom && geom.legs && geom.legs.length ? geom.legs : null;
+  const want = phases.reduce((t, [k]) => t + k, 0);
+  /* Leg counts must line up with what the caller expects to colour. If a
+     waypoint collapsed (two stops at one coordinate) they will not, and a
+     mis-coloured route is worse than an honest straight one. */
+  if (!legs || legs.length !== want) { (fallback || (() => {}))(); return false; }
+  let i = 0;
+  for (const [count, style] of phases) {
+    for (let k = 0; k < count; k++, i++) {
+      fxLayer.addLayer(routeLine(legs[i].coords, style));
+    }
+  }
+  return true;
+}
 const baseLayer = L.layerGroup().addTo(map); // hotspots, collectors, suppliers
 
 const TRUCK_SVG = '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M3 5h11v9H3zM14 8h4l3 3v3h-7zM6 18a2 2 0 1 0 0-4 2 2 0 0 0 0 4zm11 0a2 2 0 1 0 0-4 2 2 0 0 0 0 4z"/></svg>';
@@ -604,18 +680,25 @@ function runTriangulation(s, result, token) {
       : (a.kind === "pantry" ? "--c-pantry" : "--c-agency");
 
     /* A drop-off is one leg: the food goes to the site and people come to it.
-       Drawing a second leg would imply a delivery run that never happens. */
-    fxLayer.addLayer(L.polyline([[s.lat, s.lon], [a.lat, a.lon]], {
+       Drawing a second leg would imply a delivery run that never happens.
+
+       Both legs follow the streets. The server computed the geometry for the
+       winner only -- twelve routes to draw eleven lines nobody looks at would
+       be eleven wasted round trips. */
+    const outStyle = {
       color: themeColor(role), bellyRole: role,
       weight: best.dropoff ? 3.5 : 2.5, opacity: 0.9,
-      className: best.dropoff ? "route-leg2" : "route-leg1", interactive: false,
-    }));
-    if (h) {
-      fxLayer.addLayer(L.polyline([[s.lat, s.lon], [h.lat, h.lon]], {
-        color: themeColor("--c-route"), bellyRole: "--c-route",
-        weight: 3.5, opacity: 0.95, className: "route-leg2", interactive: false,
-      }));
-    }
+      className: best.dropoff ? "route-leg2" : "route-leg1",
+    };
+    const inStyle = {
+      color: themeColor("--c-route"), bellyRole: "--c-route",
+      weight: 3.5, opacity: 0.95, className: "route-leg2",
+    };
+    const phases = h ? [[1, outStyle], [1, inStyle]] : [[1, outStyle]];
+    drawGeometry(result.geometry, phases, () => {
+      fxLayer.addLayer(routeLine([[s.lat, s.lon], [a.lat, a.lon]], outStyle));
+      if (h) fxLayer.addLayer(routeLine([[s.lat, s.lon], [h.lat, h.lon]], inStyle));
+    });
     const colEl = $("col-" + a.id);
     if (colEl) colEl.classList.add("winner");
     if (h && hotspotMarkers[h.id]) {
@@ -833,7 +916,9 @@ cost = fuel    miles ÷ mpg × $${C.FUEL_PRICE_PER_GAL}/gal   [CA average]
   truck  10 mpg, $0.275/mi wear, 2 crew  → $0.76/mi   [= IRS rate 2026]
   van    18 mpg, $0.220/mi wear, 1 crew  → $0.49/mi
 meals = lbs ÷ ${C.LBS_PER_MEAL}                        [Feeding America]
-distances: haversine × ${C.ROAD_FACTOR} at ${C.AVG_SPEED_MPH} mph city speed</div>
+distances: routed over the street network (OSRM/OpenStreetMap), directed —
+           one-ways and ramps respected, so a → b ≠ b → a
+           straight-line × ${C.ROAD_FACTOR} at ${C.AVG_SPEED_MPH} mph only if the router is unreachable</div>
     </details>`;
 
   $("resultBody").hidden = false;
@@ -1233,14 +1318,35 @@ const EMPTY_BY_ROLE = {
    server too -- a business asking for /api/board/business is never sent a
    hotspot, and neither is the public view. This is the map half of that. */
 
-let role = "agency";
+/* Which view you are in survives a reload, the same way the theme does.
+   "Reset tonight" in the ledger reloads the page, so without this, clearing
+   the evening also threw you out of whatever view you were working in.
+
+   BUSINESS is the landing view for anyone arriving without a stored choice:
+   a restaurant with surplus is the one role that can arrive cold and do
+   something, and it is the side of the platform that has to be sold. The
+   agency and public views are for people who already know why they are here.
+
+   The stored value is validated against the real roles -- a stale or hand-
+   edited key would otherwise index `heads[next]` in setRole and throw before
+   the board ever drew. */
+const ROLES = ["business", "agency", "public"];
+const ROLE_DEFAULT = "business";
+
+let role = ROLE_DEFAULT;
+try {
+  const saved = localStorage.getItem("bellyup.role");
+  if (ROLES.includes(saved)) role = saved;
+} catch (e) { /* private mode -- fall back to the default */ }
 let myAgency = null;
 let offers = { offers: [], accepted: [] };
 let planned = null;
 let basket = [];       // chosen but NOT yet accepted -- previewing is free
 
 function setRole(next) {
+  if (!ROLES.includes(next)) next = ROLE_DEFAULT;
   role = next;
+  try { localStorage.setItem("bellyup.role", next); } catch (e) { /* best effort */ }
   document.querySelectorAll("#roleSwitch button")
     .forEach(b => b.classList.toggle("on", b.dataset.role === next));
   document.body.dataset.role = next;
@@ -1363,13 +1469,34 @@ function matchedCollector(s) {
 }
 
 /* One blue leg: the collector coming to this restaurant, and nothing else.
-   Keyed off matchedCollector so it cannot drift from the panel beside it. */
+   Keyed off matchedCollector so it cannot drift from the panel beside it.
+
+   Drawn straight first, then upgraded in place to the streets the van will
+   actually take. Waiting on the round trip before drawing anything would put
+   a hole in the map on every click; the guard re-checks the selection so a
+   route that resolves late cannot land on top of a different restaurant. */
 function drawMatchRoute(s) {
   const c = matchedCollector(s);
   if (!c) return;
-  fxLayer.addLayer(L.polyline([[c.lat, c.lon], [s.lat, s.lon]], {
-    color: themeColor("--c-agency"), bellyRole: "--c-agency",
-    weight: 3, opacity: .9, className: "route-leg1", interactive: false }));
+  const style = { color: themeColor("--c-agency"), bellyRole: "--c-agency",
+                  weight: 3, opacity: .9, className: "route-leg1" };
+  /* pickRestaurant already fetched this leg during the scan, so the common
+     path is a cache hit and the route is drawn once, in one frame, with the
+     dash flow running from the first frame. Swapping a straight line for a
+     routed one after the fact restarted that animation and read as a flicker.
+     Only a router that did not answer falls back to the straight line. */
+  const cached = routeCached([c, s]);
+  if (cached && cached.legs.length) {
+    cached.legs.forEach(l => fxLayer.addLayer(routeLine(l.coords, style)));
+  } else {
+    const straight = routeLine([[c.lat, c.lon], [s.lat, s.lon]], style);
+    fxLayer.addLayer(straight);
+    streetRoute([c, s]).then(g => {
+      if (selectedId !== s.id || !g || !g.legs.length) return;
+      fxLayer.removeLayer(straight);
+      g.legs.forEach(l => fxLayer.addLayer(routeLine(l.coords, style)));
+    });
+  }
   fxLayer.addLayer(L.circleMarker([s.lat, s.lon], {
     radius: 8, color: themeColor("--c-supplier"), weight: 3,
     fillOpacity: .9, interactive: false }));
@@ -1432,10 +1559,16 @@ function bizMatch(s) {
   if (!m.ok) return `<div class="pickdetail bad">${m.reason}</div>`;
   return `
     <div class="pickdetail">
-      <div class="pd-row"><span class="pd-k">Best match</span>
+      <div class="pd-row"><span class="pd-k">Matched collector</span>
         <span class="pd-v">${m.collector}</span></div>
       <div class="pd-row"><span class="pd-k">Distance</span>
         <span class="pd-v">${m.miles.toFixed(1)} mi to you</span></div>
+      ${m.rank && m.rank > 1 ? `<div class="pd-note">#${m.rank} of ${m.ranked}
+        viable collectors by net value. <b>${m.topName}</b> ranks highest
+        (${fmt$(m.topNet)} at ${m.topMiles.toFixed(1)} mi, against
+        ${fmt$(m.net)} at ${m.miles.toFixed(1)} mi). Reports are addressed one
+        collector at a time and spread so nobody opens an empty board — so the
+        highest-scoring collector is not always the one asked.</div>` : ""}
       <div class="pd-row"><span class="pd-k">Your deduction</span>
         <span class="pd-v">${fmt$(m.fmv)} est.</span></div>
       <div class="pd-note">Nobody has been asked yet. Requesting sends it to
@@ -1635,11 +1768,36 @@ async function pickRestaurant(id) {
        ourselves rather than quoting a different collector's numbers under its
        name. */
     const own = !want || !b || want.id === b.collector.id;
+
+    /* Where the matched collector actually stands. "Best match" was a lie
+       whenever the spread sent a report past a closer collector, and hiding
+       the gap made the engine look wrong rather than deliberate.
+       collectorRank comes from the server over EVERY viable collector -- r.pairs
+       is trimmed to the top few and holds one row per (collector, block), so
+       ranking against it called a third-placed collector "#3 of 4". */
+    const byCol = r.collectorRank || [];
+    const mine = byCol.find(p => p.id === (want || b.collector).id);
+    const rank = mine ? byCol.indexOf(mine) + 1 : null;
+
+    /* The routed collector -> restaurant leg. Fetched now rather than when the
+       line is drawn: the scan below runs for 900 ms anyway, so by the time
+       drawMatchRoute needs it, it is a cache hit and draws once. Redrawing a
+       straight line into a routed one mid-animation restarted the dash flow
+       and read as a flicker. */
+    const g = await streetRoute([want || b.collector, s]);
+
     s.__match = b ? {
       ok: true,
       collector: (want || b.collector).name,
       lat: (want || b.collector).lat, lon: (want || b.collector).lon,
-      miles: own ? b.leg1 : roadMi(want, s),
+      /* routed if we got it, then the engine's own leg, then an estimate */
+      miles: g ? g.miles : (own ? b.leg1 : roadMi(want, s)),
+      routed: !!(g && g.routed),
+      rank, ranked: byCol.length,
+      net: mine ? mine.net : null,
+      topName: byCol.length ? byCol[0].name : null,
+      topNet: byCol.length ? byCol[0].net : null,
+      topMiles: byCol.length ? byCol[0].miles : null,
       pickupAt: own ? b.pickupAt : null,
       deferred: own ? b.deferred : null,
       fmv: r.fmv,
@@ -1699,21 +1857,44 @@ async function selectAgency(id) {
 
 /* LEFT: who you are. Same shape as the restaurant list in the business view,
    so the left panel always answers "which one of these am I looking at". */
+/* How many requests are sitting on each collector's board, {waiting, accepted}
+   per id. Kept beside the list rather than fetched per row: one call for all
+   thirteen, refreshed by loadOffers() on every change to the board. */
+let offerCounts = {};
+
+async function refreshOfferCounts() {
+  try { offerCounts = await api("/api/board/agency/offer-counts"); }
+  catch (e) { offerCounts = {}; }      // a badge is not worth breaking the list
+}
+
 function renderAgencyList() {
   const list = collectingList();
   if (!myAgency) myAgency = list[0] && list[0].id;
   $("feed").innerHTML =
     `<div class="sec-head">Collectors (${list.length})</div>`
-    + list.map(a => `
+    + list.map(a => {
+      /* Waiting is what needs answering, so that is the number on the badge.
+         Accepted work is already someone's job and would only inflate a count
+         meant to say "these are unanswered" -- it gets its own quiet mark. */
+      const c = offerCounts[a.id] || { waiting: 0, accepted: 0 };
+      const badge = c.waiting
+        ? `<span class="offer-badge" title="${c.waiting} request${
+            c.waiting === 1 ? "" : "s"} waiting for an answer">${c.waiting}</span>`
+        : c.accepted
+          ? `<span class="offer-badge done" title="${c.accepted} accepted, nothing waiting">✓</span>`
+          : "";
+      return `
       <div class="offer pick ${a.id === myAgency ? "on" : ""}" data-agency="${a.id}">
         <div class="offer-top">
           <span>${a.kind === "agency" ? "🚚" : a.kind === "pantry" ? "🚐" : "🏢"}</span>
           <span class="offer-name">${a.name}</span>
+          ${badge}
         </div>
         <div class="offer-sub">${a.sub}${a.kind === "dropoff"
           ? " · walk-in site, collects only" : ""}${a.id === myAgency && offers.agency
           ? ` · ${offers.agency.capacityLbs} lb capacity` : ""}</div>
-      </div>`).join("");
+      </div>`;
+    }).join("");
   $("feed").querySelectorAll("[data-agency]").forEach(el =>
     el.addEventListener("click", () => selectAgency(el.dataset.agency)));
   $("feedFoot").innerHTML =
@@ -1733,6 +1914,7 @@ async function loadOffers() {
     return;
   }
   basket = basket.filter(id => offers.offers.some(o => o.supplier.id === id));
+  await refreshOfferCounts();
   renderAgencyList();
 
   const row = o => {
@@ -1841,9 +2023,9 @@ async function acceptRun(ids) {
     if (res.leftOnOffer.length)
       alert("Too much for one load — still on offer: " + res.leftOnOffer.join(", "));
     loadOffers();
-    /* Now real: redraw the same route bold and animated instead of faded --
+    /* Now real: redraw the same route bold and fast-flowing.
        "this is taken" should look different from "this is proposed". */
-    if (acceptedPlan && acceptedPlan.feasible) drawPlan(acceptedPlan, { faded: false });
+    if (acceptedPlan && acceptedPlan.feasible) drawPlan(acceptedPlan, { proposed: false });
     openLedger();
   } catch (e) { alert(e.message); }
 }
@@ -1922,37 +2104,56 @@ function renderPlan(planned) {
    collector) in route-green -- reuses the exact route-leg1/route-leg2
    flowing-dash classes runTriangulation() already uses for a single leg
    each, just looped over several legs so a multi-stop run is still
-   unambiguous about which direction is "out" vs. "back" without needing
-   real street routing. */
+   unambiguous about which direction is "out" vs. "back".
+
+   The legs are the real streets, in the order the exhaustive search settled
+   on, and they are the same legs the run was costed with -- so the miles in
+   the table beside the map and the line on the map cannot disagree. */
 function drawPlan(planned, opts = {}) {
-  /* Faded + static by default: this is a PROPOSED run, not yet taken -- the
-     driver hasn't committed to it. Once accept-run actually confirms it,
-     the caller passes {faded:false} and the same route redraws bold and
-     animated (route-leg1/route-leg2's existing flowing-dash), so "this is
-     real now" is a visible state change, not just a modal popping up. */
-  const faded = opts.faded !== false;
+  /* Proposed by default: this run is not yet taken -- the driver hasn't
+     committed to it. Once accept-run confirms it, the caller passes
+     {proposed:false} and the same route redraws thicker with a faster flow,
+     so "this is real now" is a visible state change, not just a modal
+     popping up. */
+  const proposed = opts.proposed !== false;
   clearFx();
   const col = planned.collector;
 
   const pickupChain = [col, ...planned.pickups];
-  for (let i = 0; i < pickupChain.length - 1; i++) {
-    const a = pickupChain[i], b = pickupChain[i + 1];
-    fxLayer.addLayer(L.polyline([[a.lat, a.lon], [b.lat, b.lon]], {
-      color: themeColor(isPantryKind(col) ? "--c-pantry" : "--c-agency"),
-      weight: faded ? 2 : 2.5, opacity: faded ? 0.4 : 0.9,
-      className: faded ? "route-leg1-faded" : "route-leg1", interactive: false,
-    }));
-  }
-
   const deliveryChain = [pickupChain[pickupChain.length - 1], ...planned.stops, col];
-  for (let i = 0; i < deliveryChain.length - 1; i++) {
-    const a = deliveryChain[i], b = deliveryChain[i + 1];
-    fxLayer.addLayer(L.polyline([[a.lat, a.lon], [b.lat, b.lon]], {
-      color: themeColor("--c-route"),
-      weight: faded ? 2.5 : 3, opacity: faded ? 0.45 : 0.95,
-      className: faded ? "route-leg2-faded" : "route-leg2", interactive: false,
-    }));
-  }
+  /* Same hue and same opacity as the business and public views -- a collection
+     leg is a collection leg wherever it is drawn, and the agency view reading
+     paler than the others just made it look like the weaker screen.
+     `bellyRole` is what the theme toggle re-colours by; without it this was
+     the one route on the board that kept the old theme's colour after a
+     light/dark switch.
+     Proposed vs booked is carried by weight, and by the flow speed the CSS
+     sets: slow and thin while it is only a proposal, fast and thick once the
+     crew has actually taken it. */
+  const outRole = isPantryKind(col) ? "--c-pantry" : "--c-agency";
+  const outStyle = {
+    color: themeColor(outRole), bellyRole: outRole,
+    weight: proposed ? 2.5 : 4, opacity: 0.9,
+    className: proposed ? "route-leg1-proposed" : "route-leg1",
+  };
+  const backStyle = {
+    color: themeColor("--c-route"), bellyRole: "--c-route",
+    weight: proposed ? 3.5 : 5, opacity: 0.95,
+    className: proposed ? "route-leg2-proposed" : "route-leg2",
+  };
+
+  drawGeometry(planned.geometry,
+    [[pickupChain.length - 1, outStyle], [deliveryChain.length - 1, backStyle]],
+    () => {
+      for (let i = 0; i < pickupChain.length - 1; i++) {
+        const a = pickupChain[i], b = pickupChain[i + 1];
+        fxLayer.addLayer(routeLine([[a.lat, a.lon], [b.lat, b.lon]], outStyle));
+      }
+      for (let i = 0; i < deliveryChain.length - 1; i++) {
+        const a = deliveryChain[i], b = deliveryChain[i + 1];
+        fxLayer.addLayer(routeLine([[a.lat, a.lon], [b.lat, b.lon]], backStyle));
+      }
+    });
 
   planned.pickups.forEach((p, i) => {
     fxLayer.addLayer(L.marker([p.lat, p.lon], {
@@ -2061,11 +2262,28 @@ async function renderPantries() {
     radius: 6, color: themeColor("--c-supplier"), weight: 3,
     fillOpacity: .9, interactive: false }));
 
-  /* the way to whichever pantry is selected, so it is obvious where to walk */
+  /* The way to whichever pantry is selected, so it is obvious where to walk.
+     Along the streets, because this is the one route on the board a person
+     follows on foot rather than a driver following a dispatch -- "0.4 km" cut
+     diagonally through three blocks is not a walk anyone can make. */
   if (picked) {
-    fxLayer.addLayer(L.polyline([[myPlace.lat, myPlace.lon], [picked.lat, picked.lon]], {
-      color: themeColor("--c-route"), bellyRole: "--c-route",
-      weight: 3.5, opacity: .95, className: "route-leg2", interactive: false }));
+    const style = { color: themeColor("--c-route"), bellyRole: "--c-route",
+                    weight: 3.5, opacity: .95, className: "route-leg2" };
+    const cached = routeCached([myPlace, picked], "walk");
+    if (cached && cached.legs.length) {
+      cached.legs.forEach(l => fxLayer.addLayer(routeLine(l.coords, style)));
+      map.flyToBounds(L.latLngBounds(cached.legs.flatMap(l => l.coords)).pad(0.35),
+                      { duration: 0.7 });
+      renderStats();
+      return;
+    }
+    const straight = routeLine([[myPlace.lat, myPlace.lon], [picked.lat, picked.lon]], style);
+    fxLayer.addLayer(straight);
+    streetRoute([myPlace, picked], "walk").then(g => {
+      if (selectedPantryId !== picked.id || !g || !g.legs.length) return;
+      fxLayer.removeLayer(straight);
+      g.legs.forEach(l => fxLayer.addLayer(routeLine(l.coords, style)));
+    });
     map.flyToBounds(L.latLngBounds(
       [[myPlace.lat, myPlace.lon], [picked.lat, picked.lon]]).pad(0.45),
       { duration: 0.7 });
@@ -2111,6 +2329,6 @@ function wireRoles() {
     return;
   }
   buildLayers();
-  setRole("agency");
+  setRole(role);          /* restored from last time, or the business default */
   $("ledgerCount").textContent = tonight.length;
 })();

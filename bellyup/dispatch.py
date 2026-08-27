@@ -29,6 +29,7 @@ from __future__ import annotations
 import math
 from datetime import datetime, timedelta
 
+import routing
 from demo_data import CONSTANTS as C
 
 R_EARTH_MI = 3958.76
@@ -44,7 +45,31 @@ def haversine_mi(a: dict, b: dict) -> float:
 
 
 def road_mi(a: dict, b: dict) -> float:
-    return haversine_mi(a, b) * C["ROAD_FACTOR"]
+    """Road miles from a to b -- *directed*, because downtown is.
+
+    Front and First are a one-way pair; a route out and the same route back
+    are not the same distance, and a straight line cannot express that. This
+    reads the precomputed OSRM matrix (see routing.py) and falls back to the
+    old haversine x ROAD_FACTOR estimate only when the graph has nothing to
+    say, so every caller keeps its shape and its speed.
+    """
+    return routing.mi(a, b)
+
+
+def road_min(a: dict, b: dict) -> float:
+    """Driving minutes from a to b, at the speeds OSRM assigns those streets
+    rather than one flat city average."""
+    return routing.minutes(a, b)
+
+
+def road_leg(a: dict, b: dict) -> tuple[float, float]:
+    """(miles, minutes) in a single lookup.
+
+    Time is no longer distance / AVG_SPEED_MPH: a mile of Harbor Drive and a
+    mile of Gaslamp are not the same mile, and the pickup-window and expiry
+    checks are decided in minutes.
+    """
+    return routing.leg(a, b)
 
 
 def run_cost(kind: str, miles: float, minutes: float, cfg: dict | None = None) -> dict:
@@ -295,6 +320,12 @@ def compute(supplier: dict, agencies: list[dict], pantries: list[dict],
     all_collectors = collectors(agencies, pantries)
     dropoffs = dropoff_sites(agencies)
 
+    # Fetch anything the shipped matrix has never seen -- a restaurant that
+    # registered ten minutes ago -- in a few bulk calls, before the scoring
+    # loop starts. Inside the loop every lookup must be an array index: this
+    # is thousands of pairs, and one HTTP request each would not be a board.
+    routing.warm([supplier, *all_collectors, *candidates, *dropoffs])
+
     # one lookup per collector, not per (collector x block) pair
     import demo_data as _dd
     next_run = {c["id"]: _dd.next_run_datetime(c, now) for c in all_collectors}
@@ -312,8 +343,8 @@ def compute(supplier: dict, agencies: list[dict], pantries: list[dict],
                  f"{col['name']} is not set up to accept prepared food.")
             continue
 
-        leg1 = road_mi(col, supplier)
-        arrive_pickup = now + timedelta(minutes=leg1 / C["AVG_SPEED_MPH"] * 60)
+        leg1, leg1_min = road_leg(col, supplier)
+        arrive_pickup = now + timedelta(minutes=leg1_min)
         if arrive_pickup > win_to:
             note("PICKUP_WINDOW_MISSED",
                  f"{col['name']} would reach the dock at {arrive_pickup:%H:%M}, "
@@ -327,16 +358,16 @@ def compute(supplier: dict, agencies: list[dict], pantries: list[dict],
 
         # the crew has to get home; a one-way route is not a run
         for h in candidates:
-            leg2 = road_mi(supplier, h)
-            leg_home = road_mi(h, col)
-            back_to_base = road_mi(supplier, col)
+            leg2, leg2_min = road_leg(supplier, h)
+            leg_home, home_min = road_leg(h, col)
+            back_to_base, base_min = road_leg(supplier, col)
 
             # ---- mode A: straight out tonight, base -> donor -> block -> base
             miles = leg1 + leg2 + leg_home
-            drive_min = miles / C["AVG_SPEED_MPH"] * 60
+            drive_min = leg1_min + leg2_min + home_min
             minutes = drive_min + C["HANDLING_MIN"]
             arrives = start_load + timedelta(
-                minutes=leg2 / C["AVG_SPEED_MPH"] * 60 + C["HANDLING_MIN"] / 2)
+                minutes=leg2_min + C["HANDLING_MIN"] / 2)
             direct_ok = arrives <= tonight_close(col, now)
             deferred = False
 
@@ -359,12 +390,11 @@ def compute(supplier: dict, agencies: list[dict], pantries: list[dict],
                          f"{expires_at:%H:%M}.")
                     continue
                 deferred = True
-                arrives = nxt + timedelta(
-                    minutes=road_mi(col, h) / C["AVG_SPEED_MPH"] * 60)
+                out_mi, out_min = road_leg(col, h)
+                arrives = nxt + timedelta(minutes=out_min)
                 # tonight: base -> donor -> base.  next run: base -> block -> base
-                miles = (leg1 + back_to_base
-                         + road_mi(col, h) + leg_home)
-                drive_min = miles / C["AVG_SPEED_MPH"] * 60
+                miles = leg1 + back_to_base + out_mi + leg_home
+                drive_min = leg1_min + base_min + out_min + home_min
                 minutes = drive_min + C["HANDLING_MIN"] + C["HOLD_HANDLING_MIN"]
 
             limit = C["MAX_TRANSIT_MIN"]["prepared" if prepared else "packaged/produce"]
@@ -450,8 +480,7 @@ def compute(supplier: dict, agencies: list[dict], pantries: list[dict],
                  f"{site['name']} is not set up to accept prepared food.")
             continue
 
-        leg = road_mi(supplier, site)
-        drive_min = leg / C["AVG_SPEED_MPH"] * 60
+        leg, drive_min = road_leg(supplier, site)
         minutes = drive_min + C["HANDLING_MIN"]
         arrive = now + timedelta(minutes=drive_min)
         if arrive > win_to:
@@ -528,8 +557,38 @@ COL_KEYS = ("id", "name", "kind", "lat", "lon", "program", "capacityLbs",
 HS_KEYS = ("id", "location", "area", "lat", "lon", "need", "rank", "accessDays")
 
 
-def serialisable(result: dict, top: int = 12) -> dict:
-    """Trim the result for the wire: the front end only draws the top pairs."""
+def _collector_rank(pairs: list[dict]) -> list[dict]:
+    """Distinct collectors, ranked by their own best pairing."""
+    best: dict[str, dict] = {}
+    for p in pairs:
+        c = p["collector"]
+        if p["net"] > best.get(c["id"], {"net": float("-inf")})["net"]:
+            best[c["id"]] = {"id": c["id"], "name": c["name"],
+                             "net": round(p["net"], 2),
+                             "miles": round(p["leg1"], 2),
+                             "dropoff": bool(p.get("dropoff"))}
+    return sorted(best.values(), key=lambda r: -r["net"])
+
+
+def route_for(pair: dict, supplier: dict) -> dict:
+    """The streets one recommendation would actually be driven along.
+
+    base -> restaurant -> block for a routed run; restaurant -> site for a
+    drop-off, which is one leg because the food stops there and people come
+    to it. Leg order matches what the board colours: collection first,
+    distribution second.
+    """
+    if pair.get("dropoff") or not pair.get("hotspot"):
+        return routing.path([supplier, pair["collector"]])
+    return routing.path([pair["collector"], supplier, pair["hotspot"]])
+
+
+def serialisable(result: dict, top: int = 12, supplier: dict | None = None) -> dict:
+    """Trim the result for the wire: the front end only draws the top pairs.
+
+    Geometry is fetched for the winner alone. Twelve routes is twelve
+    round trips to draw eleven lines nobody is looking at.
+    """
     def one(p):
         base = {k: (round(v, 4) if isinstance(v, float) else v)
                 for k, v in p.items() if k not in ("collector", "hotspot")}
@@ -550,6 +609,15 @@ def serialisable(result: dict, top: int = 12) -> dict:
         "dropoffOptions": result["dropoffOptions"],
         "evaluated": result["evaluated"],
         "pairs": [one(p) for p in result["pairs"][:top]],
+        # Every viable collector, best-first, one row each. `pairs` is trimmed
+        # to the top few AND holds one row per (collector, block), so it can
+        # answer neither "how many collectors could take this" nor "where does
+        # the one we asked rank" -- counting its rows called a winner "#1 of
+        # 40" and its truncation called a third-placed collector "#3 of 4".
+        "collectorRank": _collector_rank(result["pairs"]),
+        "geometry": (route_for(result["pairs"][0], supplier)
+                     if supplier and result["pairs"] else None),
+        "routing": routing.status(),
         "rejections": result["rejections"],
         "window": result["window"],
         "expiresAt": result["expiresAt"],
@@ -579,8 +647,8 @@ def _greedy_order(pool, bounds, collector, now, c, leg):
     while remaining:
         reachable = []
         for i in remaining:
-            d = leg(at, pool[i])
-            arrive = t + timedelta(minutes=d / c["AVG_SPEED_MPH"] * 60)
+            d, m = road_leg(at, pool[i])
+            arrive = t + timedelta(minutes=m)
             opens, closes = bounds[pool[i]["id"]]
             reachable.append((arrive <= closes, d, closes, i, arrive))
         # prefer feasible, then nearest; if none feasible, whichever shuts first
@@ -621,6 +689,10 @@ def combine_run(collector: dict, suppliers: list[dict], hotspots: list[dict],
 
     kind = collector.get("kind", "agency")
     cap = collector.get("capacityLbs", c["AGENCY_CAPACITY_LBS"])
+
+    # Same reason as compute(): the order search below is exhaustive, so every
+    # distance it asks for has to already be in memory.
+    routing.warm([collector, *suppliers, *hotspots])
 
     # --- which pickups fit, in what order -------------------------------
     # Fill the vehicle. Smallest first, so a van takes as many donors as it
@@ -677,9 +749,9 @@ def combine_run(collector: dict, suppliers: list[dict], hotspots: list[dict],
         dist, t, missed = 0.0, now, []
         prev = collector
         for x in pts:
-            d = leg(prev, x)
+            d, m = road_leg(prev, x)
             dist += d
-            t = t + timedelta(minutes=d / c["AVG_SPEED_MPH"] * 60)
+            t = t + timedelta(minutes=m)
             opens, closes = bounds[x["id"]]
             if t > closes:
                 missed.append(x["name"])
@@ -751,20 +823,56 @@ def combine_run(collector: dict, suppliers: list[dict], hotspots: list[dict],
         return {"feasible": False,
                 "reason": "every block within reach has been served tonight"}
 
+    # --- put the chosen blocks in the shortest legal order ---------------
+    # WHICH blocks to serve is a value question, and the greedy pass above
+    # answers it: each block earns its place on meals per mile of detour,
+    # against what the ledger says it can still absorb. In WHAT ORDER to
+    # visit them is a distance question, and greedy answers that badly --
+    # picking the best next block each time is exactly how a route ends up
+    # crossing itself, driving out to a block, back past the last one, and
+    # out again.
+    #
+    # So the set stays as chosen and the order is re-solved exhaustively over
+    # the tour last-pickup -> blocks -> base. At most MAX_STOPS blocks, so
+    # this is 6 orderings at three stops and 24 at four: optimal, not
+    # heuristic, and there is no TSP approximation to defend on stage.
+    if len(stops) > 1:
+        start, home = pickups[-1], collector
+        best_seq, best_dist = None, None
+        for order in permutations(range(len(stops))):
+            seq = [stops[i] for i in order]
+            d = road_mi(start, seq[0])
+            for a, b in zip(seq, seq[1:]):
+                d += road_mi(a, b)
+            d += road_mi(seq[-1], home)
+            if best_dist is None or d < best_dist:
+                best_seq, best_dist = seq, d
+        # detourMi was measured against the greedy visit order, which no
+        # longer exists. Restate it against the order actually driven.
+        prev = start
+        for st in best_seq:
+            st["detourMi"] = round(road_mi(prev, st), 2)
+            prev = st
+        stops = best_seq
+
     # --- cost the whole thing ------------------------------------------
-    miles = leg(collector, pickups[0])
-    for a, b in zip(pickups, pickups[1:]):
-        miles += leg(a, b)
+    # One chain, base -> every pickup -> every block -> base, so the miles
+    # costed and the geometry drawn on the map are the same route. Time is
+    # summed per leg from the road graph rather than divided out of the total
+    # at one flat speed.
+    route_pts = [collector, *pickups]
     if stops:
-        miles += leg(pickups[-1], {"lat": stops[0]["lat"], "lon": stops[0]["lon"]})
-        for a, b in zip(stops, stops[1:]):
-            miles += road_mi(a, b)
-        miles += road_mi(stops[-1], collector)      # home again
-    else:
-        miles += road_mi(pickups[-1], collector)    # straight home, still loaded
+        route_pts += stops
+    route_pts.append(collector)          # the crew has to get home
+
+    miles = drive = 0.0
+    for a, b in zip(route_pts, route_pts[1:]):
+        d, m = road_leg(a, b)
+        miles += d
+        drive += m
 
     n_stops = len(pickups) + len(stops)
-    minutes = miles / c["AVG_SPEED_MPH"] * 60 + c["HANDLING_MIN"] * n_stops / 2
+    minutes = drive + c["HANDLING_MIN"] * n_stops / 2
     rc = run_cost(kind, miles, minutes, c)
 
     served_total = sum(x["meals"] for x in stops)
@@ -785,10 +893,12 @@ def combine_run(collector: dict, suppliers: list[dict], hotspots: list[dict],
     first_stop = ({"lat": stops[0]["lat"], "lon": stops[0]["lon"]} if stops
                   else collector)
     for s in pickups:
-        one = (leg(collector, s) + leg(s, first_stop)
-               + road_mi(first_stop, collector))
-        solo += run_cost(kind, one,
-                         one / c["AVG_SPEED_MPH"] * 60 + c["HANDLING_MIN"], c)["total"]
+        one = one_min = 0.0
+        for a, b in ((collector, s), (s, first_stop), (first_stop, collector)):
+            d, m = road_leg(a, b)
+            one += d
+            one_min += m
+        solo += run_cost(kind, one, one_min + c["HANDLING_MIN"], c)["total"]
     if len(pickups) < 2:
         solo = rc["total"]
 
@@ -809,6 +919,9 @@ def combine_run(collector: dict, suppliers: list[dict], hotspots: list[dict],
 
     return {
         "feasible": True,
+        # The actual streets, in the solved order -- what the board draws.
+        "geometry": routing.path(route_pts),
+        "routing": routing.status(),
         "deadheadMi": round(deadhead, 2),
         "workingMi": round(miles - deadhead, 2),
         "collector": {k: collector[k] for k in
@@ -891,18 +1004,37 @@ def assign_targets(suppliers: list[dict], agencies: list[dict],
     nothing at all. Half the agencies would open an empty board, which is worse
     than the crowding it replaced.
 
-    So each report goes to its LEAST-LOADED viable collector, with best net
-    value as the tie-break. There is no fixed per-agency cap, because a cap
-    cannot be honoured: 17 of the 24 reports are prepared food and only three
-    collectors accept prepared food at all, so eight reports have exactly one
-    viable collector. Capping that collector would not spread those reports, it
-    would refuse them. Balancing first and ranking second gets the spread the
-    constraints actually allow -- an even split is not available and pretending
-    otherwise would mean sending food to whoever was next in line rather than
-    to whoever can take it.
+    The first version answered that greedily: each report, taken in turn, went
+    to its LEAST-LOADED viable collector with net value only as a tie-break.
+    That is the same shape as early rideshare dispatch -- one request at a
+    time, first come first served -- and it fails the same way. A report
+    decided early takes a collector that a later report needed far more, and
+    nothing downstream can undo it. Measured on tonight's board it gave up
+    $345 of net value and drove no fewer miles than the version below, at the
+    same spread: the imbalance was not buying the balance it cost.
 
-    Greedy, not optimal. The optimal version is an assignment problem, and
-    Kyle's CP-SAT branch solves it properly; this needs no solver.
+    So the whole evening is solved AT ONCE instead. Build the full
+    report x collector value matrix, then find the assignment maximising total
+    net value -- an optimal bipartite matching, the batched-matching approach
+    rideshare dispatch moved to for exactly this reason.
+
+    Balance enters as a CONVEX PENALTY rather than a hard first key. A
+    collector's second report costs ASSIGN_LOAD_PENALTY of net value, its third
+    twice that, its nth (n-1) times. The solver then spends imbalance only
+    where it is cheap, instead of treating one idle collector as worth any
+    detour at all. The penalty is a real dial with a plain meaning: what one
+    report's worth of crowding is worth in dollars.
+
+    There is still no fixed per-agency cap, because a cap cannot be honoured:
+    17 of the 24 reports are prepared food and only three collectors accept
+    prepared food at all, so eight reports have exactly one viable collector.
+    Capping that collector would not spread those reports, it would refuse
+    them. The penalty bends; a cap would break.
+
+    Optimal, and it needs no solver dependency -- scipy is already here, and
+    24 reports x 13 collectors is about a millisecond. If scipy is ever
+    missing, the greedy pass is kept below as a fallback so the board still
+    assigns rather than failing.
     """
     c = cfg or C
     targets = request_targets(agencies, pantries)
@@ -922,16 +1054,81 @@ def assign_targets(suppliers: list[dict], agencies: list[dict],
         if best:
             options[s["id"]] = sorted(((v, k) for k, v in best.items()), reverse=True)
 
-    # the report with the most to gain picks first
-    order = sorted(options, key=lambda sid: -options[sid][0][0])
+    if not options:
+        return {}
 
+    solved = _match_batch(options, [t["id"] for t in targets],
+                          float(c.get("ASSIGN_LOAD_PENALTY", 15.0)))
+    return solved if solved is not None else _match_greedy(options, targets)
+
+
+def _match_batch(options: dict[str, list[tuple[float, str]]],
+                 collector_ids: list[str], penalty: float) -> dict[str, str] | None:
+    """Optimal report -> collector matching over the whole evening at once.
+
+    Each collector becomes N interchangeable SLOTS, where N is the number of
+    reports, so nothing is capped. Slot k of a collector is worth
+    `net - penalty * k`, which is what makes crowding cost something without
+    forbidding it: taking a second report from the same collector is allowed,
+    it just has to be worth more than the penalty.
+
+    Because slots of one collector are identical apart from that penalty, the
+    solver always fills them in order -- it can never pick slot 3 while slot 1
+    sits empty, since slot 1 scores strictly higher. So the kth slot really is
+    the kth report.
+
+    Returns None if scipy is unavailable, so the caller can fall back.
+    """
+    try:
+        import numpy as np
+        from scipy.optimize import linear_sum_assignment
+    except ImportError:
+        return None
+
+    sids = list(options)
+    col_of = {cid: j for j, cid in enumerate(collector_ids)}
+    n_rows, n_cols = len(sids), len(collector_ids)
+
+    # Value of every (report, collector) pair; -INF where the pair is not
+    # viable at all. A finite sentinel, not float("-inf"): the solver needs
+    # arithmetic on these, and an infeasible cell simply has to lose to every
+    # feasible one.
+    INFEASIBLE = -1e9
+    value = np.full((n_rows, n_cols), INFEASIBLE, dtype=float)
+    for i, sid in enumerate(options):
+        for net, cid in options[sid]:
+            j = col_of.get(cid)
+            if j is not None:
+                value[i, j] = net
+
+    # widen to slots
+    slots = np.repeat(value, n_rows, axis=1)
+    step = np.tile(np.arange(n_rows, dtype=float), n_cols)
+    slots = np.where(slots <= INFEASIBLE, INFEASIBLE, slots - penalty * step)
+    owner = np.repeat(np.arange(n_cols), n_rows)
+
+    # linear_sum_assignment minimises, so hand it the negated value
+    rows, cols = linear_sum_assignment(-slots)
+
+    out: dict[str, str] = {}
+    for i, k in zip(rows, cols):
+        if slots[i, k] <= INFEASIBLE:
+            continue          # no viable collector for this report
+        out[sids[i]] = collector_ids[owner[k]]
+    return out
+
+
+def _match_greedy(options: dict[str, list[tuple[float, str]]],
+                  targets: list[dict]) -> dict[str, str]:
+    """The original pass, kept only for the case where scipy is missing.
+
+    Least-loaded viable collector, best net as the tie-break, reports taken in
+    order of what they have to gain. Not optimal -- see assign_targets -- but
+    it assigns every report, which beats not answering.
+    """
     load: dict[str, int] = {t["id"]: 0 for t in targets}
     assigned: dict[str, str] = {}
-    for sid in order:
-        # Least-loaded viable collector, best net as the tie-break. This is
-        # already a soft cap: an option with room always beats a busier one,
-        # so a collector only goes above the pack when a report has nowhere
-        # else to go.
+    for sid in sorted(options, key=lambda x: -options[x][0][0]):
         cid = min(options[sid], key=lambda t: (load[t[1]], -t[0]))[1]
         assigned[sid] = cid
         load[cid] += 1
