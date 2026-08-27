@@ -46,8 +46,16 @@ def _load() -> dict:
 
 
 def _save(cache: dict) -> None:
-    DATA_DIR.mkdir(parents=True, exist_ok=True)
-    CACHE_FILE.write_text(json.dumps(cache, indent=2, sort_keys=True))
+    """Best effort. The cache is an optimisation, not state.
+
+    A read-only deployment cannot write it, and failing the geocode because
+    the cache could not be saved would break address lookup to protect a
+    speed-up. The lookup already succeeded by the time we get here."""
+    try:
+        DATA_DIR.mkdir(parents=True, exist_ok=True)
+        CACHE_FILE.write_text(json.dumps(cache, indent=2, sort_keys=True))
+    except OSError:
+        pass
 
 
 def _census(address: str) -> dict | None:

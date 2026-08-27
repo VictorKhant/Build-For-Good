@@ -13,3 +13,6 @@ __pycache__/
 
 # Runtime state the app writes and recreates on demand
 dataset/surplus_reports.csv
+
+# Vercel
+.vercel/

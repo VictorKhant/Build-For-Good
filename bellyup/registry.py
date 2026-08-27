@@ -22,11 +22,46 @@ from surplus_reports.csv, which keeps a copy of the identity fields.
 from __future__ import annotations
 
 import csv
+import tempfile
 import threading
 from datetime import datetime
 from pathlib import Path
 
 DATA_DIR = Path(__file__).resolve().parent.parent / "dataset"
+
+# Where a registration can actually be written.
+#
+# On a serverless host the deployment is mounted read-only and only the system
+# temp directory takes writes. Bundled CSVs are still READ from DATA_DIR; a
+# file that has been written since boot is read from here instead, so a
+# restaurant that registers is visible for as long as that instance lives.
+#
+# It does not survive a cold start, and on a host that runs several instances
+# a registration is only visible to the one that took it. That is a real limit
+# of running a CSV-backed app without a database -- it is not hidden, and
+# `writable()` reports which mode is in force.
+def _writable_dir() -> Path:
+    try:
+        DATA_DIR.mkdir(parents=True, exist_ok=True)
+        probe = DATA_DIR / ".write-probe"
+        probe.write_text("")
+        probe.unlink()
+        return DATA_DIR
+    except OSError:
+        d = Path(tempfile.gettempdir()) / "bellyup-dataset"
+        d.mkdir(parents=True, exist_ok=True)
+        return d
+
+
+WRITE_DIR = _writable_dir()
+EPHEMERAL = WRITE_DIR != DATA_DIR
+
+
+def writable() -> dict:
+    """Where writes are going, for /api/state and the deploy check."""
+    return {"dir": str(WRITE_DIR), "ephemeral": EPHEMERAL,
+            "note": ("registrations live only as long as this instance"
+                     if EPHEMERAL else "registrations persist to the repo")}
 BUSINESSES = DATA_DIR / "businesses.csv"
 REPORTS = DATA_DIR / "surplus_reports.csv"
 OPTOUTS = DATA_DIR / "opted_out_businesses.csv"
@@ -50,6 +85,10 @@ _lock = threading.Lock()
 
 
 def _read(path: Path) -> list[dict]:
+    # A file written since boot shadows the bundled one.
+    live = WRITE_DIR / path.name
+    if EPHEMERAL and live.exists():
+        path = live
     if not path.exists():
         return []
     with open(path, newline="") as fh:
@@ -57,7 +96,7 @@ def _read(path: Path) -> list[dict]:
 
 
 def _write(path: Path, rows: list[dict], columns: list[str]) -> None:
-    DATA_DIR.mkdir(parents=True, exist_ok=True)
+    path = WRITE_DIR / path.name
     with open(path, "w", newline="") as fh:
         # csv defaults to \r\n, which would flip every line ending in
         # businesses.csv and make a one-row append look like a whole-file

@@ -1,0 +1,12 @@
+# Runtime dependencies for the deployed app.
+#
+# scipy is here for exactly one call -- linear_sum_assignment, which solves the
+# evening's collector assignment (see dispatch.assign_targets). It is by far
+# the largest thing in this list. If a host cannot fit it, dropping it is safe:
+# _match_batch returns None without scipy and the greedy fallback takes over,
+# so the board still assigns every report, just less well.
+fastapi==0.141.1
+numpy==2.4.6
+pydantic==2.13.4
+requests==2.34.2
+scipy==1.17.1
