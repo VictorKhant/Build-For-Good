@@ -382,12 +382,6 @@
     "lon": -117.158262,
     "matched": "825 7TH AVE, SAN DIEGO, CA, 92101"
   },
-  "8328 regents rd, san diego, ca 92122": {
-    "lat": 32.866247,
-    "lon": -117.220314,
-    "matched": "8328 REGENTS RD, SAN DIEGO, CA, 92122",
-    "source": "census"
-  },
   "833 broadway, el cajon, ca 92021": {
     "lat": 32.807636,
     "lon": -116.951923,
@@ -433,18 +427,6 @@
     "lon": -116.994583,
     "matched": "9400 CAMPO RD, SPRING VALLEY, CA, 91977"
   },
-  "9450 gilman dr, san diego, ca": {
-    "lat": 32.876069,
-    "lon": -117.229199,
-    "matched": "Gilman Drive, University City, San Diego, San Diego County, California, 92161, United States",
-    "source": "nominatim"
-  },
-  "9450 gilman drive, san diego, ca": {
-    "lat": 32.876069,
-    "lon": -117.229199,
-    "matched": "Gilman Drive, University City, San Diego, San Diego County, California, 92161, United States",
-    "source": "nominatim"
-  },
   "9455 waples street, san diego, ca 92121": {
     "lat": 32.902145,
     "lon": -117.183839,
@@ -465,7 +447,6 @@
     "lon": -116.925704,
     "matched": "9931 CHANNEL RD, LAKESIDE, CA, 92040"
   },
-  "asdkjhasd nowhere, san diego, ca": null,
   "bencotto italian kitchen, san diego": null,
   "building 200090 ash road and wire mountain road, oceanside, ca 92058": null,
   "intersection of e 20th st & newell st, national city, ca 91950": {
@@ -484,7 +465,5 @@
     "lon": -117.170227,
     "matched": "Nolita Hall, India Street, Little Italy, Banker's Hill, San Diego, San Diego County, California, 92101, United States",
     "source": "nominatim"
-  },
-  "zzzqqq nowhere at all, san diego, ca": null,
-  "zzzz nowhere at all, san diego, ca": null
+  }
 }
