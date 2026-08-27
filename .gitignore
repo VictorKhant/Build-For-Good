@@ -16,3 +16,5 @@ dataset/surplus_reports.csv
 
 # Vercel
 .vercel/
+.vercel
+.env*

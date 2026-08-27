@@ -66,9 +66,16 @@ const roadMi = (a, b) => haversineMi(a, b) * C.ROAD_FACTOR;
 /* ------------------------------------------------------------------ theme */
 /* Light is the default. The choice persists per browser. Map geometry reads
    the --c-* tokens so both themes drive colors from styles.css. */
+/* Basemap tiles, light and dark.
+   CARTO's basemaps are tolerated from localhost but stamp every tile with
+   "API KEY REQUIRED" once the page is served from a real domain, which is a
+   thing you only discover after deploying. Esri's gray canvas pair needs no
+   key from any origin and keeps the same muted-grey ground the need circles
+   and routes were coloured against.
+   Note the axis order: ArcGIS tiles are {z}/{y}/{x}, not {z}/{x}/{y}. */
 const TILE_URLS = {
-  light: "https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png",
-  dark: "https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png",
+  light: "https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Light_Gray_Base/MapServer/tile/{z}/{y}/{x}",
+  dark: "https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Dark_Gray_Base/MapServer/tile/{z}/{y}/{x}",
 };
 let theme = "light";
 try { theme = localStorage.getItem("bellyup.theme") || "light"; } catch (e) { /* private mode */ }
@@ -124,8 +131,8 @@ const dispatchFor = s => api(`/api/board/dispatch/${s.id}`, { method: "POST" });
 /* ------------------------------------------------------------------- map */
 const map = L.map("map", { zoomControl: true, attributionControl: true });
 const tiles = L.tileLayer(TILE_URLS[theme], {
-  attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OSM</a> &copy; <a href="https://carto.com/">CARTO</a>',
-  maxZoom: 19,
+  attribution: 'Tiles &copy; <a href="https://www.esri.com/">Esri</a> &mdash; Esri, HERE, Garmin, &copy; OpenStreetMap contributors',
+  maxZoom: 16,
 }).addTo(map);
 
 const fxLayer = L.layerGroup().addTo(map);   // scan lines, routes, radar
