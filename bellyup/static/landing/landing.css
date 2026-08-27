@@ -1,126 +1,164 @@
 /* BellyUp landing page.
 
-   The design system (ds-organic.css) carries the tokens and .btn / .card /
-   .nav / .input / .tag. Everything here is page layout on top of it, so
-   retuning the system retunes the page.
+   Built on the board's own design tokens rather than a separate system, so the
+   front door and the app behind it read as one product. The token block below
+   is copied from static/board/styles.css deliberately: the two pages are
+   served independently, and this one must not pull in an operator stylesheet
+   full of map and panel rules it has no use for.
 
-   Written to the handoff's resolved values. Where the handoff gave a hex and
-   a token name for the same thing, the token wins -- a hard-coded #c67139
-   would survive a theme change that the rest of the page did not. */
+   Colour keeps the meaning it has on the board -- magenta is counted need,
+   violet is a pantry, green is a delivery route -- so a reader who crosses
+   into the board meets a legend they have already been taught.
+
+   Retune the board's palette and these have to follow. */
+
+:root {
+  color-scheme: light;
+  --bg: #f2f1ed;
+  --surface: #fcfcfb;
+  --surface-2: #f0efec;
+  --ink: #0b0b0b;
+  --ink-2: #52514e;
+  --muted: #898781;
+  --line: rgba(11, 11, 11, 0.12);
+
+  --c-supplier: #eb6834;
+  --c-supplier-hi: #c74e1d;
+  --c-hotspot: #d55181;
+  --c-agency: #2a78d6;
+  --c-pantry: #4a3aa7;
+  --c-route: #0e8f63;
+
+  --shadow: 0 10px 30px rgba(11, 11, 11, 0.12);
+  --font-brand: "Space Grotesk", system-ui, sans-serif;
+}
+
+[data-theme="dark"] {
+  color-scheme: dark;
+  --bg: #0d0d0d;
+  --surface: #1a1a19;
+  --surface-2: #232322;
+  --ink: #ffffff;
+  --ink-2: #c3c2b7;
+  --muted: #898781;
+  --line: rgba(255, 255, 255, 0.10);
+
+  /* Orange is not used in dark mode on the board; amber replaces it. */
+  --c-supplier: #eda100;
+  --c-supplier-hi: #ffd166;
+  --c-hotspot: #d55181;
+  --c-agency: #3987e5;
+  --c-pantry: #9085e9;
+  --c-route: #1baf7a;
+
+  --shadow: 0 10px 30px rgba(0, 0, 0, 0.55);
+}
+
+* { box-sizing: border-box; margin: 0; padding: 0; }
 
 html {
   scroll-behavior: smooth;
-  /* The hero's decorative circle sits outside the viewport on purpose; without
-     this it drags a horizontal scrollbar across the whole page. */
+  /* The hero's decorative disc sits outside the viewport on purpose; without
+     this it drags a horizontal scrollbar across the page. */
   overflow-x: clip;
 }
-body { overflow-x: clip; }
+@media (prefers-reduced-motion: reduce) { html { scroll-behavior: auto; } }
 
-@media (prefers-reduced-motion: reduce) {
-  html { scroll-behavior: auto; }
+body {
+  background: var(--bg);
+  color: var(--ink);
+  font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+  font-size: 15px;
+  line-height: 1.55;
+  overflow-x: clip;
 }
 
-.page { overflow-x: clip; }
+h1, h2, h3 { font-family: var(--font-brand); font-weight: 700; letter-spacing: -0.02em; }
+a { color: var(--c-agency); text-underline-offset: 3px; }
+button { font: inherit; color: inherit; cursor: pointer; }
+:focus { outline: none; }
+:focus-visible { outline: 2px solid var(--c-agency); outline-offset: 2px; }
 
-/* One column, one padding rule, everywhere. The nav spans the full width but
-   aligns its contents to the same column edge. */
-.wrap {
-  max-width: 1180px;
-  margin: 0 auto;
-  padding: 0 clamp(20px, 5vw, 56px);
-}
-
-section {
-  padding-top: clamp(32px, 5vw, 72px);
-  padding-bottom: clamp(24px, 3vw, 48px);
-}
+.wrap { max-width: 1180px; margin: 0 auto; padding: 0 clamp(20px, 5vw, 56px); }
+section { padding-top: clamp(32px, 5vw, 72px); padding-bottom: clamp(24px, 3vw, 48px); }
 
 .eyebrow {
-  font-size: 13px;
-  font-weight: 600;
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
-  color: var(--color-accent-700);
+  font-family: var(--font-brand);
+  font-size: 12px; font-weight: 600;
+  letter-spacing: 0.08em; text-transform: uppercase;
+  color: var(--c-supplier-hi);
   margin: 0 0 14px;
 }
+.dim { color: var(--ink-2); }
+.faint { color: var(--muted); }
 
-.muted-82 { color: color-mix(in srgb, var(--color-text) 82%, transparent); }
-.muted-80 { color: color-mix(in srgb, var(--color-text) 80%, transparent); }
-.muted-78 { color: color-mix(in srgb, var(--color-text) 78%, transparent); }
-.muted-76 { color: color-mix(in srgb, var(--color-text) 76%, transparent); }
-.muted-72 { color: color-mix(in srgb, var(--color-text) 72%, transparent); }
-.muted-70 { color: color-mix(in srgb, var(--color-text) 70%, transparent); }
-.muted-66 { color: color-mix(in srgb, var(--color-text) 66%, transparent); }
-.muted-62 { color: color-mix(in srgb, var(--color-text) 62%, transparent); }
-
-/* ─────────────────────────────────────────────────────────────── nav ── */
+/* --------------------------------------------------------------- nav -- */
 
 .nav {
+  display: flex; align-items: center; gap: 24px;
   padding-inline: max(24px, calc((100% - 1180px) / 2 + 24px));
-  padding-block: 18px;
-  gap: 26px;
+  padding-block: 16px;
+  border-bottom: 1px solid var(--line);
+  background: var(--surface);
 }
-.nav-brand { display: flex; align-items: center; gap: 10px; margin-right: auto; }
-/* Square with a soft corner, the same shape the live board uses for its mark
-   (30px at a 9px radius). The design system pills every small control, so the
-   radius is set here explicitly rather than inherited -- one mark on two pages
-   should not be two different shapes. */
+.nav-brand {
+  display: flex; align-items: center; gap: 10px; margin-right: auto;
+  font: 600 17px/1 var(--font-brand); letter-spacing: -0.01em;
+}
+/* 30px at a 9px radius -- the board's mark, to the pixel. */
 .brand-mark {
-  width: 34px; height: 34px;
-  border-radius: 10px;
-  background: var(--color-accent);
-  color: var(--color-neutral-100);
-  font-family: var(--font-heading);
-  font-size: 15px;
-  display: grid; place-content: center;
-  flex: none;
+  width: 30px; height: 30px; flex: none;
+  border-radius: 9px;
+  display: grid; place-items: center;
+  background: var(--c-supplier); color: #fff;
+  font: 700 13px/1 var(--font-brand); letter-spacing: -0.02em;
 }
-.nav-links { display: flex; align-items: center; gap: 26px; }
-.nav a:hover { text-decoration: underline; text-underline-offset: 3px; }
+.nav-links { display: flex; align-items: center; gap: 20px; }
+.nav-links a { color: var(--ink-2); text-decoration: none; font-size: 14px; }
+.nav-links a:hover { color: var(--ink); }
 
-/* ────────────────────────────────────────────────────────────── hero ── */
-
-.hero {
-  position: relative;
-  padding-top: clamp(48px, 7vw, 104px);
+.btn {
+  display: inline-flex; align-items: center; justify-content: center;
+  font-family: var(--font-brand); font-weight: 600; font-size: 14px;
+  text-decoration: none;
+  padding: 9px 16px;
+  border: 1px solid transparent; border-radius: 10px;
+  background: transparent; color: var(--ink);
 }
-.hero-circle {
-  position: absolute;
-  right: -120px; top: -180px;
-  width: 400px; height: 400px;
-  border-radius: 50%;
-  background: var(--color-accent-2-200);
-  z-index: -1;
-  pointer-events: none;
-}
-.hero h1 {
-  font-size: clamp(40px, 6vw, 78px);
-  line-height: 1.08;
-  letter-spacing: 0;
-  /* optical flush-left: the T's left sidebearing makes the line look indented */
-  margin: 0 0 22px -0.028em;
-}
-.hero h1 span { display: block; }
-.hero h1 .second { color: var(--color-accent-700); }
-.hero-lede {
-  font-size: 18px; line-height: 30px;
-  max-width: 56ch;
-  margin: 0;
-}
-.hero-actions {
-  display: flex; gap: 14px; flex-wrap: wrap;
-  margin-top: 32px;
-}
-.hero-foot {
-  font-size: 14px; line-height: 24px;
-  margin: 26px 0 0;
-}
-
-/* Buttons in this page are bigger than the system default, which is sized for
-   dense forms. Padding only -- colour and radius stay the system's. */
+.btn-primary { background: var(--c-supplier); color: #fff; }
+.btn-primary:hover { background: var(--c-supplier-hi); }
+.btn-ghost { border-color: var(--line); }
+.btn-ghost:hover { background: var(--surface-2); }
 .btn-lg { padding: 12px 22px; font-size: 15px; }
 
-/* ─────────────────────────────────────────────────────────────── map ── */
+.theme-btn {
+  width: 34px; height: 34px; flex: none;
+  border-radius: 10px; border: 1px solid var(--line);
+  background: var(--surface);
+  display: grid; place-items: center;
+  font-size: 15px; line-height: 1;
+}
+.theme-btn:hover { background: var(--surface-2); }
+
+/* -------------------------------------------------------------- hero -- */
+
+.hero { position: relative; padding-top: clamp(48px, 7vw, 100px); }
+.hero-circle {
+  position: absolute;
+  right: -140px; top: -180px;
+  width: 400px; height: 400px;
+  border-radius: 50%;
+  background: color-mix(in srgb, var(--c-supplier) 12%, transparent);
+  z-index: -1; pointer-events: none;
+}
+.hero h1 { font-size: clamp(38px, 5.6vw, 68px); line-height: 1.06; margin: 0 0 22px; }
+.hero h1 span { display: block; }
+.hero h1 .second { color: var(--c-supplier-hi); }
+.hero-lede { font-size: 17.5px; line-height: 29px; max-width: 56ch; color: var(--ink-2); }
+.hero-actions { display: flex; gap: 12px; flex-wrap: wrap; margin-top: 30px; }
+.hero-foot { font-size: 13.5px; line-height: 24px; margin-top: 26px; color: var(--muted); }
+
+/* --------------------------------------------------------------- map -- */
 
 .map-section {
   display: grid;
@@ -129,159 +167,120 @@ section {
   align-items: center;
 }
 .map-figure {
-  border-radius: 56px;
-  overflow: hidden;
-  background: var(--color-neutral-100);
-  box-shadow: var(--shadow-md);
+  border-radius: 20px; overflow: hidden;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  box-shadow: var(--shadow);
 }
 .map-figure svg { display: block; width: 100%; height: auto; }
-.map-aside h2 {
-  font-size: clamp(26px, 2.6vw, 34px);
-  line-height: 1.2;
-  margin: 0 0 16px;
-}
-.map-aside p { font-size: 16px; line-height: 28px; margin: 0 0 14px; }
+.map-aside h2 { font-size: clamp(24px, 2.4vw, 32px); line-height: 1.18; margin: 0 0 14px; }
+.map-aside p { font-size: 15.5px; line-height: 26px; color: var(--ink-2); margin: 0 0 12px; }
 
-/* ────────────────────────────────────────────────────────── how it works ── */
+/* The legend, so the colours mean here what they mean on the board. */
+.map-key { display: flex; flex-wrap: wrap; gap: 14px; margin-top: 18px; }
+.map-key span { display: inline-flex; align-items: center; gap: 7px; font-size: 13px; color: var(--ink-2); }
+.map-key i { width: 11px; height: 11px; border-radius: 50%; display: block; }
 
-.how h2 {
-  font-size: clamp(30px, 3.4vw, 44px);
-  line-height: 1.14;
-  max-width: 24ch;
-  margin: 0 0 clamp(28px, 4vw, 48px);
-}
-.steps {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
-  gap: clamp(24px, 3vw, 44px);
-}
+/* ------------------------------------------------------- how it works -- */
+
+.how h2 { font-size: clamp(26px, 3vw, 38px); line-height: 1.14; max-width: 24ch; margin: 0 0 clamp(26px, 4vw, 44px); }
+.steps { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: clamp(22px, 3vw, 40px); }
 .step-num {
-  width: 72px; height: 72px;
-  border-radius: 999px;
+  width: 46px; height: 46px;
+  border-radius: 12px;
   display: grid; place-content: center;
-  font-family: var(--font-heading);
-  font-size: 30px;
-  margin-bottom: 22px;
+  font: 700 19px/1 var(--font-brand);
+  margin-bottom: 18px;
 }
-.step h3 { font-size: 22px; line-height: 28px; margin: 0 0 10px; }
-.step p { font-size: 15.5px; line-height: 28px; max-width: 34ch; margin: 0; }
+.step h3 { font-size: 19px; line-height: 26px; margin: 0 0 9px; }
+.step p { font-size: 15px; line-height: 26px; max-width: 34ch; color: var(--ink-2); }
 
-/* ───────────────────────────────────────────────────────────── stats ── */
+/* ------------------------------------------------------------- stats -- */
 
-.stats {
-  display: flex; flex-wrap: wrap;
-  gap: clamp(16px, 2.5vw, 36px);
-  align-items: center;
-}
+.stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); gap: 14px; }
 .stat {
-  aspect-ratio: 1;
-  border-radius: 50%;
-  display: grid; place-content: center;
-  text-align: center;
-  box-sizing: border-box;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  padding: 20px 22px;
 }
-.stat b {
-  display: block;
-  font-family: var(--font-heading);
-  font-weight: 400;
-  font-size: clamp(30px, 3.4vw, 44px);
-  line-height: 1;
-}
+.stat b { display: block; font: 700 clamp(28px, 3vw, 38px)/1 var(--font-brand); letter-spacing: -0.02em; }
 .stat span {
-  display: block;
-  margin-top: 8px;
-  font-size: 13px; line-height: 18px;
-  font-weight: 600;
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
-  color: color-mix(in srgb, var(--color-text) 70%, transparent);
+  display: block; margin-top: 9px;
+  font-size: 12.5px; line-height: 18px; font-weight: 600;
+  letter-spacing: 0.05em; text-transform: uppercase;
+  color: var(--muted);
 }
-/* The staggered baseline is deliberate. It is dropped below, when the circles
-   wrap to one per row and the offset would read as a mistake. */
-.stat.drop { transform: translateY(26px); }
 
-/* ─────────────────────────────────────────────────────── restaurants ── */
+/* ------------------------------------------------------- restaurants -- */
 
 .donate {
   display: grid;
   grid-template-columns: minmax(0, 6fr) minmax(0, 5fr);
-  gap: clamp(24px, 4vw, 64px);
+  gap: clamp(24px, 4vw, 60px);
   align-items: start;
 }
-.donate h2 {
-  font-size: clamp(28px, 3.2vw, 40px);
-  line-height: 1.14;
-  max-width: 22ch;
-  margin: 0 0 20px;
-}
-.donate p { font-size: 16px; line-height: 28px; max-width: 52ch; margin: 0 0 18px; }
+.donate h2 { font-size: clamp(25px, 2.8vw, 36px); line-height: 1.14; max-width: 22ch; margin: 0 0 18px; }
+.donate p { font-size: 15.5px; line-height: 27px; max-width: 52ch; color: var(--ink-2); margin: 0 0 16px; }
 
 .receipt {
-  border-radius: 56px;
-  background: var(--color-accent-100);
-  padding: clamp(22px, 3vw, 34px);
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 20px;
+  padding: clamp(22px, 3vw, 30px);
+  box-shadow: var(--shadow);
 }
 .receipt-kicker {
-  font-size: 12px; font-weight: 600;
-  letter-spacing: 0.06em; text-transform: uppercase;
-  color: var(--color-accent-800);
+  font-family: var(--font-brand);
+  font-size: 11.5px; font-weight: 600;
+  letter-spacing: 0.08em; text-transform: uppercase;
+  color: var(--c-route);
   margin: 0 0 10px;
 }
-.receipt h3 {
-  font-size: 26px; line-height: 32px;
-  margin: 0 0 6px;
-}
-.receipt-sub { font-size: 14.5px; line-height: 24px; margin: 0 0 20px; }
+.receipt h3 { font-size: 22px; line-height: 28px; margin: 0 0 6px; }
+.receipt-sub { font-size: 14px; line-height: 22px; color: var(--ink-2); margin: 0 0 18px; }
 .receipt-rows { display: grid; gap: 10px; }
 .receipt-row {
   display: flex; justify-content: space-between; gap: 16px;
-  font-size: 15px; line-height: 24px;
+  font-size: 14.5px; line-height: 22px;
+  padding-bottom: 10px;
+  border-bottom: 1px solid var(--line);
 }
-.receipt-row b { font-weight: 600; }
-.receipt-foot { font-size: 13px; line-height: 21px; margin: 20px 0 0; }
+.receipt-row:last-child { border-bottom: 0; padding-bottom: 0; }
+.receipt-row b { font-family: var(--font-brand); font-weight: 600; }
+.receipt-foot {
+  font-size: 12.5px; line-height: 20px; color: var(--muted);
+  margin-top: 16px; padding-top: 14px;
+  border-top: 1px solid var(--line);
+}
 
-/* ─────────────────────────────────────────────────────────── closing ── */
+/* ----------------------------------------------------------- closing -- */
 
 .closing {
-  background: var(--color-accent-2-100);
-  border-radius: 56px;
-  padding: clamp(28px, 4vw, 56px);
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 20px;
+  padding: clamp(26px, 4vw, 48px);
 }
-.closing h3 {
-  font-size: clamp(24px, 2.6vw, 32px);
-  line-height: 1.16;
-  max-width: 28ch;
-  margin: 0 0 16px;
-}
-.closing p { font-size: 16px; line-height: 28px; max-width: 56ch; margin: 0 0 26px; }
-.closing-actions { display: flex; gap: 14px; flex-wrap: wrap; }
+.closing h3 { font-size: clamp(22px, 2.4vw, 30px); line-height: 1.16; max-width: 28ch; margin: 0 0 14px; }
+.closing p { font-size: 15.5px; line-height: 27px; max-width: 56ch; color: var(--ink-2); margin: 0 0 24px; }
+.closing-actions { display: flex; gap: 12px; flex-wrap: wrap; }
 
 .foot {
   display: grid; gap: 6px;
   max-width: 78ch;
-  font-size: 13.5px; line-height: 24px;
+  font-size: 13px; line-height: 22px;
+  color: var(--muted);
   padding-bottom: clamp(40px, 6vw, 80px);
 }
 
-/* ─────────────────────────────────────────────────────── responsive ── */
+/* -------------------------------------------------------- responsive -- */
 
-/* The prototype was desktop-first and its three two-column grids did not
-   collapse. Below 900px they stack; the steps and the stat row already
-   reflow on their own through auto-fit and flex-wrap. */
 @media (max-width: 900px) {
-  .map-section,
-  .donate {
-    grid-template-columns: minmax(0, 1fr);
-  }
-  .map-figure { border-radius: 36px; }
-  .receipt, .closing { border-radius: 36px; }
+  .map-section, .donate { grid-template-columns: minmax(0, 1fr); }
 }
-
 @media (max-width: 640px) {
-  .nav { gap: 16px; flex-wrap: wrap; }
-  .nav-links { gap: 16px; }
+  .nav { gap: 14px; flex-wrap: wrap; }
+  .nav-links { gap: 14px; }
   .hero-circle { right: -160px; top: -140px; width: 300px; height: 300px; }
-  /* One per row: the deliberate stagger now reads as a misalignment, so it goes. */
-  .stat.drop { transform: none; }
-  .stats { gap: 20px; }
 }

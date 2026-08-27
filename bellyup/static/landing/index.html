@@ -9,9 +9,17 @@
 <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>🍲</text></svg>">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Caprasimo&family=Figtree:wght@400;500;600;700&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="/static/landing/ds-organic.css">
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="/static/landing/landing.css">
+<script>
+  /* Apply the stored theme before first paint. The board writes the same key,
+     so whichever page you set it on, the other one is already in that theme
+     when it loads -- and there is no flash of the wrong one. */
+  try {
+    if (localStorage.getItem("bellyup.theme") === "dark")
+      document.documentElement.setAttribute("data-theme", "dark");
+  } catch (e) { /* private mode */ }
+</script>
 </head>
 <body>
 <div class="page">
@@ -25,7 +33,8 @@
   <div class="nav-links">
     <a href="#how">How it works</a>
     <a href="#donate">For restaurants</a>
-    <a class="btn btn-primary" href="/">Open the live board</a>
+    <a class="btn btn-primary" href="/board">Open the live board</a>
+    <button class="theme-btn" id="themeBtn" type="button" aria-label="Switch theme"></button>
   </div>
 </nav>
 
@@ -37,32 +46,38 @@
       <span>There is food tonight.</span>
       <span class="second">Here is where.</span>
     </h1>
-    <p class="hero-lede muted-82">San Diego kitchens finish the night with good food left
+    <p class="hero-lede">San Diego kitchens finish the night with good food left
       over. BellyUp moves it to the blocks where people are counted — and if you are the one
       who is hungry, it tells you which pantry is open, how far it is, and how long the walk
       takes.</p>
     <div class="hero-actions">
-      <a class="btn btn-primary btn-lg" href="/">Open the live board</a>
+      <a class="btn btn-primary btn-lg" href="/board">Open the live board</a>
       <a class="btn btn-ghost btn-lg" href="#how">How it works</a>
     </div>
-    <p class="hero-foot muted-62">Downtown San Diego · 13 pantry sites · 382 blocks counted</p>
+    <p class="hero-foot">Downtown San Diego · 13 pantry sites · 382 blocks counted</p>
   </div>
 </section>
 
 <!-- ─────────────────────────────────────────────────────── need + pantry ── -->
 <section>
   <div class="wrap map-section">
-    <figure class="map-figure washed" id="mapFigure">
+    <figure class="map-figure" id="mapFigure">
       <!-- inline SVG, drawn on load from blocks.json -->
     </figure>
     <div class="map-aside">
       <p class="eyebrow">The map underneath</p>
       <h2>Every circle is a real block</h2>
-      <p class="muted-78">Terracotta circles are downtown blocks sized by counted need, from
-        the Downtown San Diego Partnership street count. Sage circles are pantry sites, with
-        the hours they publish. The board draws the route between the two.</p>
-      <p class="muted-62" style="font-size:14px;line-height:24px;margin:0">The street count is
-        a monthly visual sweep — a known undercount.</p>
+      <p>Each magenta circle is a downtown block, sized by counted need, from the
+        Downtown San Diego Partnership street count. Violet marks a pantry site, with the
+        hours it publishes. Green is the walk between the two. The board uses the same
+        three colours for the same three things.</p>
+      <div class="map-key">
+        <span><i style="background:var(--c-hotspot)"></i>Counted need</span>
+        <span><i style="background:var(--c-pantry)"></i>Pantry site</span>
+        <span><i style="background:var(--c-route)"></i>The walk</span>
+      </div>
+      <p class="faint" style="font-size:13.5px;line-height:23px;margin:16px 0 0">The street
+        count is a monthly visual sweep — a known undercount.</p>
     </div>
   </div>
 </section>
@@ -74,23 +89,23 @@
     <h2>Report, collect, and out the door the same evening</h2>
     <div class="steps">
       <div class="step">
-        <div class="step-num" style="background:var(--color-accent-100);color:var(--color-accent-700)">1</div>
+        <div class="step-num" style="background:color-mix(in srgb,var(--c-supplier) 16%,transparent);color:var(--c-supplier-hi)">1</div>
         <h3>A kitchen says what is left</h3>
-        <p class="muted-78">A restaurant, hotel, grocer or venue reports the pounds, what it
+        <p>A restaurant, hotel, grocer or venue reports the pounds, what it
           is, when it can be picked up and how long it keeps. Nothing to donate tonight is a
           real answer.</p>
       </div>
       <div class="step">
-        <div class="step-num" style="background:var(--color-accent-200);color:var(--color-accent-800)">2</div>
+        <div class="step-num" style="background:color-mix(in srgb,var(--c-agency) 16%,transparent);color:var(--c-agency)">2</div>
         <h3>One collector is asked</h3>
-        <p class="muted-78">An agency box truck or a pantry van, whichever can serve the most
+        <p>An agency box truck or a pantry van, whichever can serve the most
           people for what the run actually costs. The request goes to that one collector, not
           to a noticeboard.</p>
       </div>
       <div class="step">
-        <div class="step-num" style="background:var(--color-accent-2-200);color:var(--color-accent-2-800)">3</div>
+        <div class="step-num" style="background:color-mix(in srgb,var(--c-route) 16%,transparent);color:var(--c-route)">3</div>
         <h3>It goes where people are</h3>
-        <p class="muted-78">Out to a counted block if the crew can get there before nine, or
+        <p>Out to a counted block if the crew can get there before nine, or
           into a pantry that opens tomorrow. Every confirmed run is logged, with a receipt for
           the donor.</p>
       </div>
@@ -101,20 +116,20 @@
 <!-- ───────────────────────────────────────────────────────────── stats ── -->
 <section>
   <div class="wrap stats">
-    <div class="stat" style="width:214px;padding:24px;background:var(--color-accent-100)">
-      <b style="color:var(--color-accent-700)">382</b>
+    <div class="stat">
+      <b style="color:var(--c-hotspot)">382</b>
       <span>Downtown blocks counted</span>
     </div>
-    <div class="stat drop" style="width:186px;padding:22px;background:var(--color-accent-200)">
-      <b style="color:var(--color-accent-700)">207</b>
+    <div class="stat">
+      <b style="color:var(--c-hotspot)">207</b>
       <span>Carry need on tonight&rsquo;s map</span>
     </div>
-    <div class="stat" style="width:254px;padding:26px;background:var(--color-accent-2-300)">
-      <b style="color:var(--color-accent-2-800)">$100</b>
+    <div class="stat">
+      <b style="color:var(--c-route)">$100</b>
       <span>Saved by putting three pickups on one truck</span>
     </div>
-    <div class="stat drop" style="width:176px;padding:22px;background:var(--color-accent-2-100)">
-      <b style="color:var(--color-accent-2-700)">1.2 lb</b>
+    <div class="stat">
+      <b style="color:var(--c-agency)">1.2 lb</b>
       <span>Is one meal</span>
     </div>
   </div>
@@ -126,24 +141,24 @@
     <div>
       <p class="eyebrow">For restaurants</p>
       <h2>Donating costs you nothing, and it counts at tax time</h2>
-      <p class="muted-80">You do not pay to donate and you do not drive. The collector absorbs
+      <p>You do not pay to donate and you do not drive. The collector absorbs
         the cost of the run, so the only thing asked of a kitchen is a report at the end of the
         night.</p>
-      <p class="muted-80">Every confirmed pickup files a receipt in the ledger: pounds, date,
+      <p>Every confirmed pickup files a receipt in the ledger: pounds, date,
         who collected, and the estimated fair market value of the food — the paperwork behind
         an enhanced deduction under IRC §170(e)(3).</p>
-      <a class="btn btn-primary btn-lg" href="/" style="margin-top:8px">Report tonight&rsquo;s surplus</a>
+      <a class="btn btn-primary btn-lg" href="/board" style="margin-top:8px">Report tonight&rsquo;s surplus</a>
     </div>
     <div class="receipt">
       <p class="receipt-kicker">Donor receipt · example</p>
       <h3>129 lb, prepared</h3>
-      <p class="receipt-sub muted-76">Collected 19:40 · Feeding San Diego (South Bay)</p>
+      <p class="receipt-sub">Collected 19:40 · Feeding San Diego (South Bay)</p>
       <div class="receipt-rows">
         <div class="receipt-row"><span>Meals from this pickup</span><b>107</b></div>
         <div class="receipt-row"><span>Fair market value at $1.79/lb</span><b>$230.91</b></div>
         <div class="receipt-row"><span>Cost to you</span><b>$0.00</b></div>
       </div>
-      <p class="receipt-foot muted-66">Estimates only. Donors should consult a tax professional.</p>
+      <p class="receipt-foot">Estimates only. Donors should consult a tax professional.</p>
     </div>
   </div>
 </section>
@@ -153,11 +168,11 @@
   <div class="wrap">
     <div class="closing">
       <h3>Watch a night get dispatched</h3>
-      <p class="muted-80">The live board runs on the real datasets: every block, every pantry
+      <p>The live board runs on the real datasets: every block, every pantry
         schedule, every cost line. Pick a report and watch it choose a collector, a route and a
         block — then say what it ruled out and why.</p>
       <div class="closing-actions">
-        <a class="btn btn-primary btn-lg" href="/">Open the live board</a>
+        <a class="btn btn-primary btn-lg" href="/board">Open the live board</a>
         <a class="btn btn-ghost btn-lg" href="https://github.com/VictorKhant/Build-For-Good">Read the model</a>
       </div>
     </div>
@@ -165,7 +180,7 @@
 </section>
 
 <footer>
-  <div class="wrap foot muted-66">
+  <div class="wrap foot">
     <div>BellyUp — surplus food to the streets that need it. San Diego.</div>
     <div>Block need from the Downtown San Diego Partnership street count; pantry hours from the
       San Diego Food Bank EFAP roster. Surplus reports in the demo are a seeded draw —
@@ -250,28 +265,28 @@ function drawMap() {
 
   const blocks = state.blocks.filter(b => inBox(b[0], b[1])).map(b =>
     `<circle cx="${X(b[1]).toFixed(1)}" cy="${Y(b[0]).toFixed(1)}" r="${(3 + Math.sqrt(b[2]) * 2.4).toFixed(2)}"
-      fill="var(--color-accent-300)" fill-opacity=".62"
-      stroke="var(--color-accent-500)" stroke-opacity=".5" stroke-width="1.2"/>`).join("");
+      fill="var(--c-hotspot)" fill-opacity=".42"
+      stroke="var(--c-hotspot)" stroke-opacity=".55" stroke-width="1.2"/>`).join("");
 
   const pans = PANTRIES.filter(p => inBox(p.lat, p.lon)).map(p =>
     `<circle cx="${X(p.lon).toFixed(1)}" cy="${Y(p.lat).toFixed(1)}" r="9.5"
-      fill="var(--color-accent-2-500)" stroke="var(--color-neutral-100)" stroke-width="3"/>`).join("");
+      fill="var(--c-pantry)" stroke="var(--surface)" stroke-width="3"/>`).join("");
 
   const nearest = PANTRIES.filter(p => p.open).sort((a, b) => distKm(a) - distKm(b))[0];
   const route = nearest ? `
     <line x1="${X(ORIGIN.lon).toFixed(1)}" y1="${Y(ORIGIN.lat).toFixed(1)}"
           x2="${X(nearest.lon).toFixed(1)}" y2="${Y(nearest.lat).toFixed(1)}"
-          stroke="var(--color-accent-2-700)" stroke-width="2.6" stroke-linecap="round"
+          stroke="var(--c-route)" stroke-width="2.6" stroke-linecap="round"
           stroke-dasharray="7 6"/>` : "";
   const origin = `<circle cx="${X(ORIGIN.lon).toFixed(1)}" cy="${Y(ORIGIN.lat).toFixed(1)}" r="6.5"
-      fill="var(--color-text)" stroke="var(--color-neutral-100)" stroke-width="3"/>`;
+      fill="var(--ink)" stroke="var(--surface)" stroke-width="3"/>`;
 
   const leaders = [
     { lat: 32.7073, lon: -117.149, dy: 42 },
     { lat: 32.7142, lon: -117.157, dy: -34 },
   ].map(l => `<line x1="${X(l.lon).toFixed(1)}" y1="${Y(l.lat).toFixed(1)}"
       x2="${X(l.lon).toFixed(1)}" y2="${(Y(l.lat) + l.dy).toFixed(1)}"
-      stroke="var(--color-accent-700)" stroke-width="1.6" stroke-opacity=".55"/>`).join("");
+      stroke="var(--muted)" stroke-width="1.6" stroke-opacity=".7"/>`).join("");
 
   /* Cream halo behind each label via paint-order, so a label stays readable
      where it crosses a block circle. */
@@ -280,20 +295,45 @@ function drawMap() {
     { t: "9th & E St · need 29.8",  lat: 32.7142, lon: -117.157, dy: -54 },
     { t: "You are here",                 lat: ORIGIN.lat, lon: ORIGIN.lon, dy: 34 },
   ].map(l => `<text x="${X(l.lon).toFixed(1)}" y="${(Y(l.lat) + l.dy).toFixed(1)}"
-      text-anchor="middle" font-family="var(--font-body)" font-size="21" font-weight="600"
-      fill="var(--color-text)" stroke="var(--color-neutral-100)" stroke-width="6"
+      text-anchor="middle" font-family="var(--font-brand)" font-size="21" font-weight="600"
+      fill="var(--ink)" stroke="var(--surface)" stroke-width="6"
       stroke-linejoin="round" paint-order="stroke" opacity=".86">${esc(l.t)}</text>`).join("");
 
   document.getElementById("mapFigure").innerHTML =
     `<svg viewBox="0 0 ${W} ${H}" width="100%" role="img"
        aria-label="Downtown San Diego: 207 counted blocks sized by need, with pantry sites and the walk to the closest open one"
-       style="display:block;background:var(--color-neutral-100)">
-       <rect x="0" y="0" width="${W}" height="${H}" fill="var(--color-neutral-100)"/>
+       style="display:block;background:var(--surface)">
+       <rect x="0" y="0" width="${W}" height="${H}" fill="var(--surface)"/>
        <g>${blocks}</g>${route}${origin}<g>${pans}</g><g>${leaders}</g><g>${labels}</g>
      </svg>`;
 }
 
+/* ─────────────────────────────────────────────────────────────── theme ── */
+
+/* The board's toggle, on the board's storage key. Set the theme on either
+   page and the other is already in it -- the alternative was a warm cream
+   marketing page handing you off to a dark console. */
+let theme = "light";
+try { theme = localStorage.getItem("bellyup.theme") || "light"; } catch (e) {}
+
+function applyTheme() {
+  if (theme === "dark") document.documentElement.setAttribute("data-theme", "dark");
+  else document.documentElement.removeAttribute("data-theme");
+  const b = document.getElementById("themeBtn");
+  b.textContent = theme === "dark" ? "☀️" : "🌙";
+  b.title = theme === "dark" ? "Switch to light mode" : "Switch to dark mode";
+}
+
+document.getElementById("themeBtn").addEventListener("click", () => {
+  theme = theme === "dark" ? "light" : "dark";
+  try { localStorage.setItem("bellyup.theme", theme); } catch (e) {}
+  applyTheme();
+  drawMap();          /* the SVG reads the tokens, so it has to be redrawn */
+});
+
 /* ──────────────────────────────────────────────────────────────── boot ── */
+
+applyTheme();
 
 drawMap();
 

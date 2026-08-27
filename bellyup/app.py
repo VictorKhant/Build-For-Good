@@ -16,7 +16,7 @@ from datetime import datetime, timedelta
 from pathlib import Path
 
 from fastapi import FastAPI, HTTPException, Query
-from fastapi.responses import FileResponse, HTMLResponse
+from fastapi.responses import FileResponse, HTMLResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
@@ -898,8 +898,9 @@ class RevalidatingStatics(StaticFiles):
 app.mount("/static", RevalidatingStatics(directory=HERE / "static"), name="static")
 
 
-@app.get("/")
+@app.get("/board")
 def index():
+    """The dispatch board. It was at `/` until the landing page took the root."""
     return HTMLResponse(_board_html(), headers={"Cache-Control": "no-cache"})
 
 
@@ -907,17 +908,27 @@ BOARD_DIR = HERE / "static" / "board"
 LANDING_DIR = HERE / "static" / "landing"
 
 
-@app.get("/landing")
+@app.get("/")
 def landing():
-    """The public front door. The board stays at `/`; every CTA here links to it.
+    """The public front door, at the root.
+
+    Someone opening the deployed link should meet the page that explains the
+    project, not an operator's dispatch console. The board moved to /board and
+    every call to action here points at it.
 
     Served through the same stamping as the board so an edit to landing.css is
     never masked by a cached copy.
     """
     return HTMLResponse(_stamp(LANDING_DIR / "index.html", LANDING_DIR,
-                               ("landing.css", "ds-organic.css", "blocks.json"),
+                               ("landing.css", "blocks.json"),
                                "/static/landing/"),
                         headers={"Cache-Control": "no-cache"})
+
+
+@app.get("/landing")
+def landing_alias():
+    """Where the page used to live. Anything already linking here still works."""
+    return RedirectResponse("/", status_code=308)
 
 
 def _stamp(html_path, asset_dir, assets: tuple[str, ...], url_prefix: str) -> str:

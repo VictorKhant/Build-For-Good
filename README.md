@@ -38,9 +38,19 @@ the earlier three-role `/roles` prototype (`agencies.py`, `collection.py`,
 
 ## The landing page
 
-`/landing` is the public front door; the board keeps `/`, and every call to
-action on the page links to it. The board's **BellyUp mark is the way back** —
-it pointed at `/`, which was a link to the page you were already on.
+The landing page is at **`/`** and the board at **`/board`**; `/landing`
+redirects to the root so older links still work. Someone opening the deployed
+URL should meet the page that explains the project, not an operator's console.
+The board's **BellyUp mark is the way back**, and every call to action on the
+page opens the board.
+
+It is built on the **board's own tokens** — Space Grotesk, the `--c-*` role
+colours, the same light/dark pair — rather than a design system of its own, so
+the front door and the app read as one product. Colour keeps its meaning
+across the boundary: magenta is counted need, violet a pantry, green a
+delivery route, exactly as the board's legend has it. The theme toggle writes
+the same `localStorage` key the board reads, so setting dark on either page
+means the other is already dark when you reach it.
 
 The page does not carry a find-food search. The handoff's design had one, but
 it was a mock-up: a fixed origin, an address field that changed nothing, and
