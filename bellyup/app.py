@@ -904,6 +904,32 @@ def index():
 
 
 BOARD_DIR = HERE / "static" / "board"
+LANDING_DIR = HERE / "static" / "landing"
+
+
+@app.get("/landing")
+def landing():
+    """The public front door. The board stays at `/`; every CTA here links to it.
+
+    Served through the same stamping as the board so an edit to landing.css is
+    never masked by a cached copy.
+    """
+    return HTMLResponse(_stamp(LANDING_DIR / "index.html", LANDING_DIR,
+                               ("landing.css", "ds-organic.css", "blocks.json"),
+                               "/static/landing/"),
+                        headers={"Cache-Control": "no-cache"})
+
+
+def _stamp(html_path, asset_dir, assets: tuple[str, ...], url_prefix: str) -> str:
+    """Rewrite asset URLs to carry their file's modification time."""
+    html = html_path.read_text()
+    for asset in assets:
+        try:
+            stamp = int((asset_dir / asset).stat().st_mtime)
+        except OSError:
+            continue
+        html = html.replace(f"{url_prefix}{asset}", f"{url_prefix}{asset}?v={stamp}")
+    return html
 
 
 def _board_html() -> str:
@@ -919,12 +945,5 @@ def _board_html() -> str:
     and must be fetched; an unchanged one keeps its URL and stays cached. The
     page itself is never cached, so the stamps always propagate.
     """
-    html = (BOARD_DIR / "index.html").read_text()
-    for asset in ("styles.css", "app.js"):
-        try:
-            stamp = int((BOARD_DIR / asset).stat().st_mtime)
-        except OSError:
-            continue
-        html = html.replace(f"/static/board/{asset}",
-                            f"/static/board/{asset}?v={stamp}")
-    return html
+    return _stamp(BOARD_DIR / "index.html", BOARD_DIR,
+                  ("styles.css", "app.js"), "/static/board/")

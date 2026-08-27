@@ -1,0 +1,397 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>BellyUp — there is food tonight</title>
+<meta name="description" content="San Diego kitchens finish the night with good food left over. BellyUp moves it to the blocks where people are counted, and tells you which pantry is open and how far it is.">
+<!-- Same mark as the live board. The round Bu brand circle is the nav mark, not the favicon. -->
+<link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>🍲</text></svg>">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Caprasimo&family=Figtree:wght@400;500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/static/landing/ds-organic.css">
+<link rel="stylesheet" href="/static/landing/landing.css">
+</head>
+<body>
+<div class="page">
+
+<!-- ─────────────────────────────────────────────────────────────── nav ── -->
+<nav class="nav">
+  <div class="nav-brand">
+    <span class="brand-mark" aria-hidden="true">Bu</span>
+    <span>BellyUp</span>
+  </div>
+  <div class="nav-links">
+    <a href="#how">How it works</a>
+    <a href="#find">Find food</a>
+    <a href="#donate">For restaurants</a>
+    <a class="btn btn-primary" href="/">Open the live board</a>
+  </div>
+</nav>
+
+<!-- ────────────────────────────────────────────────────────────── hero ── -->
+<section class="hero">
+  <div class="hero-circle" aria-hidden="true"></div>
+  <div class="wrap">
+    <h1>
+      <span>There is food tonight.</span>
+      <span class="second">Here is where.</span>
+    </h1>
+    <p class="hero-lede muted-82">San Diego kitchens finish the night with good food left
+      over. BellyUp moves it to the blocks where people are counted — and if you are the one
+      who is hungry, it tells you which pantry is open, how far it is, and how long the walk
+      takes.</p>
+    <div class="hero-actions">
+      <a class="btn btn-primary btn-lg" href="/">Open the live board</a>
+      <a class="btn btn-ghost btn-lg" href="#find">Find food near you</a>
+    </div>
+    <p class="hero-foot muted-62">Downtown San Diego · 13 pantry sites · 382 blocks counted</p>
+  </div>
+</section>
+
+<!-- ─────────────────────────────────────────────────────── need + pantry ── -->
+<section>
+  <div class="wrap map-section">
+    <figure class="map-figure washed" id="mapFigure">
+      <!-- inline SVG, drawn on load from blocks.json -->
+    </figure>
+    <div class="map-aside">
+      <p class="eyebrow">The map underneath</p>
+      <h2>Every circle is a real block</h2>
+      <p class="muted-78">Terracotta circles are downtown blocks sized by counted need, from
+        the Downtown San Diego Partnership street count. Sage circles are pantry sites, with
+        the hours they publish. The board draws the route between the two.</p>
+      <p class="muted-62" style="font-size:14px;line-height:24px;margin:0">The street count is
+        a monthly visual sweep — a known undercount.</p>
+    </div>
+  </div>
+</section>
+
+<!-- ────────────────────────────────────────────────────────── how it works ── -->
+<section id="how" class="how">
+  <div class="wrap">
+    <p class="eyebrow">How it works</p>
+    <h2>Report, collect, and out the door the same evening</h2>
+    <div class="steps">
+      <div class="step">
+        <div class="step-num" style="background:var(--color-accent-100);color:var(--color-accent-700)">1</div>
+        <h3>A kitchen says what is left</h3>
+        <p class="muted-78">A restaurant, hotel, grocer or venue reports the pounds, what it
+          is, when it can be picked up and how long it keeps. Nothing to donate tonight is a
+          real answer.</p>
+      </div>
+      <div class="step">
+        <div class="step-num" style="background:var(--color-accent-200);color:var(--color-accent-800)">2</div>
+        <h3>One collector is asked</h3>
+        <p class="muted-78">An agency box truck or a pantry van, whichever can serve the most
+          people for what the run actually costs. The request goes to that one collector, not
+          to a noticeboard.</p>
+      </div>
+      <div class="step">
+        <div class="step-num" style="background:var(--color-accent-2-200);color:var(--color-accent-2-800)">3</div>
+        <h3>It goes where people are</h3>
+        <p class="muted-78">Out to a counted block if the crew can get there before nine, or
+          into a pantry that opens tomorrow. Every confirmed run is logged, with a receipt for
+          the donor.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ───────────────────────────────────────────────────────────── stats ── -->
+<section>
+  <div class="wrap stats">
+    <div class="stat" style="width:214px;padding:24px;background:var(--color-accent-100)">
+      <b style="color:var(--color-accent-700)">382</b>
+      <span>Downtown blocks counted</span>
+    </div>
+    <div class="stat drop" style="width:186px;padding:22px;background:var(--color-accent-200)">
+      <b style="color:var(--color-accent-700)">207</b>
+      <span>Carry need on tonight&rsquo;s map</span>
+    </div>
+    <div class="stat" style="width:254px;padding:26px;background:var(--color-accent-2-300)">
+      <b style="color:var(--color-accent-2-800)">$100</b>
+      <span>Saved by putting three pickups on one truck</span>
+    </div>
+    <div class="stat drop" style="width:176px;padding:22px;background:var(--color-accent-2-100)">
+      <b style="color:var(--color-accent-2-700)">1.2 lb</b>
+      <span>Is one meal</span>
+    </div>
+  </div>
+</section>
+
+<!-- ────────────────────────────────────────────────────────── find food ── -->
+<section id="find" class="find">
+  <div class="wrap">
+    <p class="eyebrow">Find food</p>
+    <h2>Type where you are. The closest open pantry comes first.</h2>
+    <p class="find-lede muted-78">This view shows pantry locations only. Outreach blocks are
+      never shown here, and nobody has to give a name to look.</p>
+
+    <div class="find-panel">
+      <div>
+        <label class="find-label" for="whereInput">Where are you?</label>
+        <input class="input" id="whereInput" type="text"
+               placeholder="e.g. 16th &amp; Market, San Diego"
+               value="16th &amp; Market, San Diego">
+
+        <div class="ranges" role="group" aria-label="Search radius">
+          <button type="button" class="range-pill" data-range="2" aria-pressed="false">2 km</button>
+          <button type="button" class="range-pill" data-range="5" aria-pressed="true">5 km</button>
+          <button type="button" class="range-pill" data-range="10" aria-pressed="false">10 km</button>
+        </div>
+
+        <div class="closest">
+          <p class="closest-kicker">Closest open to you</p>
+          <p class="closest-name" id="closestName">&nbsp;</p>
+          <p class="closest-meta muted-78" id="closestMeta">&nbsp;</p>
+        </div>
+
+        <p class="find-note muted-62" id="findNote">Straight-line estimate. The live board
+          routes the same walk over the street network.</p>
+      </div>
+
+      <div class="results">
+        <div class="results-head">
+          <b id="resultsHeading">&nbsp;</b>
+          <span class="muted-62">ranked by distance</span>
+        </div>
+        <div id="resultsList"></div>
+        <p class="results-foot muted-62">Hours and eligibility as published on the San Diego
+          Food Bank EFAP roster and the city&rsquo;s distribution list.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ─────────────────────────────────────────────────────── restaurants ── -->
+<section id="donate">
+  <div class="wrap donate">
+    <div>
+      <p class="eyebrow">For restaurants</p>
+      <h2>Donating costs you nothing, and it counts at tax time</h2>
+      <p class="muted-80">You do not pay to donate and you do not drive. The collector absorbs
+        the cost of the run, so the only thing asked of a kitchen is a report at the end of the
+        night.</p>
+      <p class="muted-80">Every confirmed pickup files a receipt in the ledger: pounds, date,
+        who collected, and the estimated fair market value of the food — the paperwork behind
+        an enhanced deduction under IRC §170(e)(3).</p>
+      <a class="btn btn-primary btn-lg" href="/" style="margin-top:8px">Report tonight&rsquo;s surplus</a>
+    </div>
+    <div class="receipt">
+      <p class="receipt-kicker">Donor receipt · example</p>
+      <h3>129 lb, prepared</h3>
+      <p class="receipt-sub muted-76">Collected 19:40 · Feeding San Diego (South Bay)</p>
+      <div class="receipt-rows">
+        <div class="receipt-row"><span>Meals from this pickup</span><b>107</b></div>
+        <div class="receipt-row"><span>Fair market value at $1.79/lb</span><b>$230.91</b></div>
+        <div class="receipt-row"><span>Cost to you</span><b>$0.00</b></div>
+      </div>
+      <p class="receipt-foot muted-66">Estimates only. Donors should consult a tax professional.</p>
+    </div>
+  </div>
+</section>
+
+<!-- ─────────────────────────────────────────────────────── closing + foot ── -->
+<section>
+  <div class="wrap">
+    <div class="closing">
+      <h3>Watch a night get dispatched</h3>
+      <p class="muted-80">The live board runs on the real datasets: every block, every pantry
+        schedule, every cost line. Pick a report and watch it choose a collector, a route and a
+        block — then say what it ruled out and why.</p>
+      <div class="closing-actions">
+        <a class="btn btn-primary btn-lg" href="/">Open the live board</a>
+        <a class="btn btn-ghost btn-lg" href="https://github.com/VictorKhant/Build-For-Good">Read the model</a>
+      </div>
+    </div>
+  </div>
+</section>
+
+<footer>
+  <div class="wrap foot muted-66">
+    <div>BellyUp — surplus food to the streets that need it. San Diego.</div>
+    <div>Block need from the Downtown San Diego Partnership street count; pantry hours from the
+      San Diego Food Bank EFAP roster. Surplus reports in the demo are a seeded draw —
+      voluntary end-of-day reporting is the part that does not exist yet.</div>
+  </div>
+</footer>
+
+</div>
+
+<script>
+/* ═══════════════════════════════════════════════════════════════════════
+   BellyUp landing page.
+
+   Plain vanilla JS, matching how bellyup/static/board is built: no
+   framework, no build step. Two jobs — project the map, and run the
+   find-food panel.
+   ═══════════════════════════════════════════════════════════════════ */
+
+/* Pantry sites: mobile_pantries.csv where downtown_relevant is true, plus the
+   two Father Joe's sites.
+
+   `open` is a STATIC stand-in for "open around now". It is not derived from
+   the hours beside it, which is why a site can read "Daily 09:00-16:00" and
+   still not be picked as closest-open. The board evaluates real schedules;
+   this page does not yet. */
+const PANTRIES = [
+  { name: "St. Vincent de Paul / Father Joe's Villages (Imperial Ave)", lat: 32.7095, lon: -117.152,  hours: "Daily 11:30–13:00",             note: "Hot meal service · open to all", open: true },
+  { name: "Sherman Heights Community Center",                           lat: 32.7105, lon: -117.14,   hours: "1st Thursday 09:00–12:00",       note: "EFAP · priority lines for seniors and people with disabilities", open: false },
+  { name: "Salvation Army Centre City",                                 lat: 32.7155, lon: -117.1595, hours: "3rd Friday 09:00–11:00",         note: "EFAP · walk-ins", open: false },
+  { name: "Stepping Higher Incorporated",                               lat: 32.7145, lon: -117.133,  hours: "Tuesday–Thursday 10:00–13:00", note: "EFAP · walk-ins", open: true },
+  { name: "St. Vincent De Paul Father Joe's Villages (E Street)",       lat: 32.716,  lon: -117.126,  hours: "Friday 12:00–14:00",             note: "EFAP · drive-thru", open: false },
+  { name: "Ladle Fellowship",                                           lat: 32.7225, lon: -117.1665, hours: "2nd & 4th Saturday 08:30–10:00", note: "Emergency food distribution · open", open: false },
+  { name: "San Diego Broadway Spanish Seventh Day Adventist",           lat: 32.7175, lon: -117.137,  hours: "1st Saturday 14:30–16:30",       note: "EFAP · walk-ins", open: false },
+  { name: "Faith Tabernacle",                                           lat: 32.7,    lon: -117.129,  hours: "Daily 09:00–16:00",              note: "Community food bank · open", open: true },
+  { name: "St Paul's United Methodist Church",                          lat: 32.7025, lon: -117.129,  hours: "1st & 4th Thursday 12:00–14:00", note: "EFAP · walk-ins", open: false },
+  { name: "31st Street Seventh Day Adventist Church",                   lat: 32.701,  lon: -117.13,   hours: "Wednesday 12:30–14:00",          note: "Produce and bread distribution · open", open: false },
+  { name: "MAAC Project at Mercado Apartments",                         lat: 32.6975, lon: -117.14,   hours: "1st Thursday 09:00–11:00",       note: "EFAP · walk-ins", open: false },
+  { name: "Central Apostolic Assembly First Church",                    lat: 32.6975, lon: -117.125,  hours: "2nd Thursday 10:00–12:00",       note: "EFAP · drive-thru and walk-ins", open: false },
+  { name: "St. Paul's Cathedral",                                       lat: 32.7315, lon: -117.161,  hours: "3rd Thursday from 14:00",             note: "Grocery pantry · photo ID required", open: false },
+];
+
+/* The highest-need blocks, inline, so the map is never empty if the fetch
+   fails. Replaced on load by the full 207 from blocks.json. */
+const FALLBACK_BLOCKS = [
+  [32.7073,-117.149,74.8],[32.7142,-117.157,29.8],[32.7058,-117.1511,28.4],
+  [32.7142,-117.1579,27.4],[32.7087,-117.154,23.2],[32.711,-117.1499,22.9],
+  [32.7178,-117.1629,21.4],[32.711,-117.1471,17.9],[32.7099,-117.149,17.5],
+  [32.7044,-117.1515,16],
+];
+
+const ORIGIN = { lat: 32.7109864, lon: -117.1499028, label: "16th & Market, San Diego" };
+
+const state = { blocks: FALLBACK_BLOCKS, range: 5 };
+
+/* Straight-line, times the same 1.3 road factor the board falls back to when
+   its router is unreachable. The board itself routes over real streets; this
+   page does not have a routed origin to work from, and the footnote says so. */
+function distKm(p) {
+  const dy = (p.lat - ORIGIN.lat) * 111.32;
+  const dx = (p.lon - ORIGIN.lon) * 111.32 * Math.cos(ORIGIN.lat * Math.PI / 180);
+  return Math.hypot(dx, dy) * 1.3;
+}
+const walkMin = (km) => Math.round(km / 5 * 60);
+
+/* ─────────────────────────────────────────────────────────────── map ── */
+
+function drawMap() {
+  const W = 760, H = 620, pad = 26;
+  const lat0 = 32.7025, lat1 = 32.7245, lon0 = -117.1725, lon1 = -117.1425;
+  /* Equirectangular with a longitude correction at this latitude, and ONE
+     scale for both axes so downtown is not stretched. */
+  const k = Math.cos(32.712 * Math.PI / 180);
+  const s = Math.min((W - pad * 2) / ((lon1 - lon0) * k), (H - pad * 2) / (lat1 - lat0));
+  const X = (lon) => pad + (lon - lon0) * k * s;
+  const Y = (lat) => H - pad - (lat - lat0) * s;
+  const inBox = (lat, lon) => lat >= lat0 && lat <= lat1 && lon >= lon0 && lon <= lon1;
+  const esc = (t) => String(t).replace(/&/g, "&amp;").replace(/</g, "&lt;");
+
+  const blocks = state.blocks.filter(b => inBox(b[0], b[1])).map(b =>
+    `<circle cx="${X(b[1]).toFixed(1)}" cy="${Y(b[0]).toFixed(1)}" r="${(3 + Math.sqrt(b[2]) * 2.4).toFixed(2)}"
+      fill="var(--color-accent-300)" fill-opacity=".62"
+      stroke="var(--color-accent-500)" stroke-opacity=".5" stroke-width="1.2"/>`).join("");
+
+  const pans = PANTRIES.filter(p => inBox(p.lat, p.lon)).map(p =>
+    `<circle cx="${X(p.lon).toFixed(1)}" cy="${Y(p.lat).toFixed(1)}" r="9.5"
+      fill="var(--color-accent-2-500)" stroke="var(--color-neutral-100)" stroke-width="3"/>`).join("");
+
+  const nearest = PANTRIES.filter(p => p.open).sort((a, b) => distKm(a) - distKm(b))[0];
+  const route = nearest ? `
+    <line x1="${X(ORIGIN.lon).toFixed(1)}" y1="${Y(ORIGIN.lat).toFixed(1)}"
+          x2="${X(nearest.lon).toFixed(1)}" y2="${Y(nearest.lat).toFixed(1)}"
+          stroke="var(--color-accent-2-700)" stroke-width="2.6" stroke-linecap="round"
+          stroke-dasharray="7 6"/>` : "";
+  const origin = `<circle cx="${X(ORIGIN.lon).toFixed(1)}" cy="${Y(ORIGIN.lat).toFixed(1)}" r="6.5"
+      fill="var(--color-text)" stroke="var(--color-neutral-100)" stroke-width="3"/>`;
+
+  const leaders = [
+    { lat: 32.7073, lon: -117.149, dy: 42 },
+    { lat: 32.7142, lon: -117.157, dy: -34 },
+  ].map(l => `<line x1="${X(l.lon).toFixed(1)}" y1="${Y(l.lat).toFixed(1)}"
+      x2="${X(l.lon).toFixed(1)}" y2="${(Y(l.lat) + l.dy).toFixed(1)}"
+      stroke="var(--color-accent-700)" stroke-width="1.6" stroke-opacity=".55"/>`).join("");
+
+  /* Cream halo behind each label via paint-order, so a label stays readable
+     where it crosses a block circle. */
+  const labels = [
+    { t: "17th & K St · need 74.8", lat: 32.7073, lon: -117.149, dy: 62 },
+    { t: "9th & E St · need 29.8",  lat: 32.7142, lon: -117.157, dy: -54 },
+    { t: "You are here",                 lat: ORIGIN.lat, lon: ORIGIN.lon, dy: 34 },
+  ].map(l => `<text x="${X(l.lon).toFixed(1)}" y="${(Y(l.lat) + l.dy).toFixed(1)}"
+      text-anchor="middle" font-family="var(--font-body)" font-size="21" font-weight="600"
+      fill="var(--color-text)" stroke="var(--color-neutral-100)" stroke-width="6"
+      stroke-linejoin="round" paint-order="stroke" opacity=".86">${esc(l.t)}</text>`).join("");
+
+  document.getElementById("mapFigure").innerHTML =
+    `<svg viewBox="0 0 ${W} ${H}" width="100%" role="img"
+       aria-label="Downtown San Diego: 207 counted blocks sized by need, with pantry sites and the walk to the closest open one"
+       style="display:block;background:var(--color-neutral-100)">
+       <rect x="0" y="0" width="${W}" height="${H}" fill="var(--color-neutral-100)"/>
+       <g>${blocks}</g>${route}${origin}<g>${pans}</g><g>${leaders}</g><g>${labels}</g>
+     </svg>`;
+}
+
+/* ────────────────────────────────────────────────────────── find food ── */
+
+function renderFind() {
+  const esc = (t) => String(t).replace(/&/g, "&amp;").replace(/</g, "&lt;");
+  const listed = PANTRIES
+    .map(p => ({ ...p, d: distKm(p) }))
+    .filter(p => p.d <= state.range)
+    .sort((a, b) => a.d - b.d);
+
+  /* Closest OPEN, falling back to the closest of any -- someone who has to
+     walk deserves an address either way, with the hours to judge it by. */
+  const closest = listed.find(p => p.open) || listed[0];
+  document.getElementById("closestName").textContent =
+    closest ? closest.name : "Nothing open in range";
+  document.getElementById("closestMeta").textContent =
+    closest ? `${closest.hours} · ${closest.d.toFixed(1)} km · ${walkMin(closest.d)} min walk`
+            : "Try a wider range.";
+
+  /* The heading counts everything within range, not just the five shown. */
+  document.getElementById("resultsHeading").textContent =
+    `${listed.length} within ${state.range} km`;
+
+  document.getElementById("resultsList").innerHTML = listed.length
+    ? listed.slice(0, 5).map((p, i) => `
+      <div class="card result">
+        <div class="rank" style="background:${i === 0 ? "var(--color-accent-2-200)" : "var(--color-accent-100)"};
+                                 color:${i === 0 ? "var(--color-accent-2-800)" : "var(--color-accent-700)"}">${i + 1}</div>
+        <div>
+          <div class="result-name">${esc(p.name)}</div>
+          <div class="result-hours muted-72">${esc(p.hours)}</div>
+          <div class="result-note muted-62">${esc(p.note)}</div>
+        </div>
+        <div class="result-right">
+          <div class="result-dist">${p.d.toFixed(1)} km</div>
+          <div class="result-walk muted-62">${walkMin(p.d)} min walk</div>
+        </div>
+      </div>`).join("")
+    : `<p class="results-empty muted-72">Nothing within ${state.range} km. Try a wider range.</p>`;
+}
+
+document.querySelectorAll(".range-pill").forEach(btn => {
+  btn.addEventListener("click", () => {
+    state.range = Number(btn.dataset.range);
+    document.querySelectorAll(".range-pill").forEach(b =>
+      b.setAttribute("aria-pressed", String(b === btn)));
+    renderFind();          /* instant: no submit step to find a meal behind */
+  });
+});
+
+/* ──────────────────────────────────────────────────────────────── boot ── */
+
+renderFind();
+drawMap();
+
+fetch("/static/landing/blocks.json")
+  .then(r => r.ok ? r.json() : null)
+  .then(d => { if (Array.isArray(d) && d.length) { state.blocks = d; drawMap(); } })
+  .catch(() => { /* the inline fallback is already drawn */ });
+</script>
+</body>
+</html>

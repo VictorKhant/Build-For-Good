@@ -36,6 +36,23 @@ the earlier three-role `/roles` prototype (`agencies.py`, `collection.py`,
 
 ---
 
+## The landing page
+
+`/landing` is the public front door; the board keeps `/`, and every call to
+action on the page links to it. Plain HTML, one vendored design-system
+stylesheet plus one page stylesheet, and a small vanilla-JS block for the
+find-food panel — the same shape as `static/board/`, no framework and no build
+step. `blocks.json` is generated from `dataset/hotspots.csv` rather than
+hand-copied, so the map cannot drift from the data the board scores on.
+
+> ⚠ **The page maps block-level need publicly**, which the board deliberately
+> does not: hotspots are agency-only and `/api/board/business` and the public
+> view are never sent one. The underlying street count is published data and
+> the page names no distribution time, but this is still a wider disclosure
+> than the board's own rule allows. Decide it deliberately before the page goes
+> public — dropping the need encoding is a two-line change in
+> `static/landing/index.html`.
+
 ## Three views, one board
 
 A role switcher in the header. **Business is where a first-time visitor
